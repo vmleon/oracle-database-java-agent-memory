@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Podman/Docker Oracle DB volume
+oradata/
+
+# Java / Gradle
+.gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+HELP.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+.project
+.classpath
+.factorypath
+.settings/
+.springBeans
+.sts4-cache
+.vscode/
+.apt_generated
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/

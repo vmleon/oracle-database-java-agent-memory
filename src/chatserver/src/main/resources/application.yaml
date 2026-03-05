@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: chatserver
+
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/freepdb1}
+    username: ${DB_USERNAME:spring_ai_user}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    type: oracle.ucp.jdbc.PoolDataSourceImpl
+    oracleucp:
+      connection-pool-name: chatserver-pool
+      initial-pool-size: 5
+      min-pool-size: 5
+      max-pool-size: 20
+
+  ai:
+    oci:
+      genai:
+        authentication-type: ${OCI_AUTH_TYPE:file}
+        file: ${OCI_CONFIG_FILE:~/.oci/config}
+        profile: ${OCI_PROFILE:DEFAULT}
+        region: ${OCI_REGION:us-chicago-1}
+        chat:
+          options:
+            model: ${OCI_GENAI_MODEL}
+            compartment: ${OCI_COMPARTMENT}
+            serving-mode: on-demand
+            temperature: 0.7
+            max-tokens: 2048
+        embedding:
+          model: ${OCI_EMBEDDING_MODEL:cohere.embed-english-light-v2.0}
+          compartment: ${OCI_COMPARTMENT}
+
+    vectorstore:
+      oracle:
+        initialize-schema: true
+        distance-type: COSINE
+        dimensions: 384
+
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: always
