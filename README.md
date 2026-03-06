@@ -81,8 +81,10 @@ oci iam compartment list --name "MyCompartment" --compartment-id-in-subtree true
   --query "data[0].id" --raw-output
 
 # List available GenAI chat models in your compartment
-oci generative-ai model list --compartment-id <your-compartment-ocid> \
-  --query "data[?\"capabilities\"[?contains(@, 'TEXT_GENERATION')]].id"
+oci generative-ai model-collection list-models \
+  --compartment-id <your-compartment-ocid> \
+  --capability CHAT \
+  --query "data.items[].{name:\"display-name\", id:id}"
 ```
 
 OCI auth defaults to `~/.oci/config` with the `DEFAULT` profile.
