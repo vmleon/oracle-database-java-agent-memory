@@ -46,3 +46,6 @@ bin/
 /dist/
 /nbdist/
 /.nb-gradle/
+
+# Local Spring profile (contains credentials)
+src/chatserver/src/main/resources/application-local.yaml

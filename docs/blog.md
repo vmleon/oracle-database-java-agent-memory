@@ -330,14 +330,14 @@ podman logs -f oradb
 
 Wait for "DATABASE IS READY TO USE!" in the logs before continuing.
 
-### 2. Set OCI credentials
+### 2. Set up the local profile
 
 ```bash
-export OCI_GENAI_MODEL=<your-model-ocid>
-export OCI_COMPARTMENT=<your-compartment-ocid>
+cd src/chatserver/src/main/resources
+cp application-local.yaml.example application-local.yaml
 ```
 
-You'll need an OCI account with access to Generative AI. Auth defaults to `~/.oci/config` with the `DEFAULT` profile.
+Edit `application-local.yaml` and fill in your OCI GenAI model OCID and compartment OCID. You'll need an OCI account with access to Generative AI. Auth defaults to `~/.oci/config` with the `DEFAULT` profile.
 
 ### 3. Start the backend
 
