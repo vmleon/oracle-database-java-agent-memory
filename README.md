@@ -1,6 +1,6 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle Database 23ai. The agent has two memory layers: episodic memory (chat history persisted via JDBC) and semantic memory (domain knowledge retrieved via Oracle AI Vector Search).
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has two memory layers: episodic memory (chat history persisted via JDBC) and semantic memory (domain knowledge retrieved via Oracle AI Vector Search).
 
 ## Architecture
 
@@ -11,7 +11,7 @@ graph LR
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
     API --> VS["Vector Store Table<br/>(semantic memory)"]
 
-    subgraph Oracle DB 23ai
+    subgraph Oracle AI Database 26ai
         CM
         VS
     end
@@ -87,7 +87,7 @@ Add knowledge (for RAG retrieval):
 ```bash
 curl -X POST http://localhost:8080/api/v1/agent/knowledge \
   -H "Content-Type: text/plain" \
-  -d "Oracle Database 23ai supports native VECTOR data type for AI workloads."
+  -d "Oracle AI Database 26ai supports native VECTOR data type for AI workloads."
 ```
 
 ## API Reference

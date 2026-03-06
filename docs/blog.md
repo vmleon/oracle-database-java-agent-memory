@@ -24,7 +24,7 @@ graph TD
     ChatTable --> LLM["OCI Generative AI<br/>(LLM inference)"]
     VectorTable --> LLM
 
-    subgraph Oracle DB 23ai
+    subgraph Oracle AI Database 26ai
         ChatTable
         VectorTable
     end
@@ -41,7 +41,7 @@ graph LR
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
     API --> VS["Vector Store Table<br/>(semantic memory)"]
 
-    subgraph Oracle DB 23ai
+    subgraph Oracle AI Database 26ai
         CM
         VS
     end
@@ -51,7 +51,7 @@ The stack:
 
 - **Spring Boot 3.5.11** + **Spring AI 1.1.2** for the backend
 - **OCI Generative AI** for chat inference and embeddings (Cohere embed-english-light-v2.0)
-- **Oracle Database 23ai** for both memory tables (with Oracle AI Vector Search for the semantic side)
+- **Oracle AI Database 26ai** for both memory tables (with Oracle AI Vector Search for the semantic side)
 - **Streamlit** for a quick-and-dirty web UI
 - **Java 21**, **Gradle 8.14**
 
@@ -302,6 +302,6 @@ The whole point is that agent memory doesn't have to be complicated. Two advisor
 
 ---
 
-**Stack:** Spring Boot 3.5.11 | Spring AI 1.1.2 | Java 21 | Oracle Database 23ai | OCI Generative AI | Streamlit
+**Stack:** Spring Boot 3.5.11 | Spring AI 1.1.2 | Java 21 | Oracle AI Database 26ai | OCI Generative AI | Streamlit
 
 **Code:** [github.com/victormartin/oracle-database-java-agent-memory](.)
