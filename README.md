@@ -40,8 +40,9 @@ Wait for the database to be ready:
 
 ```bash
 podman logs -f oradb
-# Wait for "DATABASE IS READY TO USE!"
 ```
+
+Wait for "DATABASE IS READY TO USE!" in the logs before continuing.
 
 ### 2. Set OCI environment variables
 

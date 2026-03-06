@@ -236,10 +236,10 @@ podman run -d --name oradb \
   -e ORACLE_PWD=Oracle123 \
   -v ./oradata:/opt/oracle/oradata \
   container-registry.oracle.com/database/free:latest
-
-# Wait for "DATABASE IS READY TO USE!"
 podman logs -f oradb
 ```
+
+Wait for "DATABASE IS READY TO USE!" in the logs before continuing.
 
 ### 2. Set OCI credentials
 
@@ -269,19 +269,26 @@ streamlit run app.py
 
 ### 5. Or just use curl
 
+Chat with the agent:
+
 ```bash
-# Chat
 curl -X POST http://localhost:8080/api/v1/agent/chat \
   -H "Content-Type: text/plain" \
   -H "X-Conversation-Id: test-1" \
   -d "Hello, what can you help me with?"
+```
 
-# Teach it something
+Teach it something:
+
+```bash
 curl -X POST http://localhost:8080/api/v1/agent/knowledge \
   -H "Content-Type: text/plain" \
   -d "The company's return policy allows returns within 30 days of purchase."
+```
 
-# Ask about what you taught it
+Ask about what you taught it:
+
+```bash
 curl -X POST http://localhost:8080/api/v1/agent/chat \
   -H "Content-Type: text/plain" \
   -H "X-Conversation-Id: test-1" \
