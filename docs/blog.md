@@ -2,7 +2,7 @@
 
 Every LLM has the same problem: it forgets everything the moment the conversation ends. Ask it your name, tell it your name, ask again in a new session -- gone. It's like talking to someone with a very expensive case of amnesia.
 
-If you want to build an AI *agent* -- something that actually remembers context and knows things about your domain -- you need to give it memory. Not the marketing-deck kind of memory with five architecture layers and a Kubernetes diagram. The practical kind, where the thing actually remembers what you said and can look up facts you taught it.
+If you want to build an AI *agent* -- something that actually remembers context and knows things about your domain -- you need to give it memory. The practical kind, where it actually remembers what you said and can look up facts you taught it.
 
 This is a POC I built to do exactly that. Two types of memory, one database, about 100 lines of Java.
 
