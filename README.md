@@ -1,6 +1,6 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has two memory layers: episodic memory (chat history persisted via JDBC) and semantic memory (domain knowledge retrieved via Oracle AI Vector Search).
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle AI Vector Search), and procedural memory (`@Tool`-annotated methods the LLM can call to perform actions).
 
 ## Architecture
 
@@ -10,11 +10,28 @@ graph LR
     API --> OCI["OCI Generative AI<br/>(LLM + Embeddings)"]
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
     API --> VS["Vector Store Table<br/>(semantic memory)"]
+    API --> PM["@Tool Methods<br/>(procedural memory)"]
 
     subgraph Oracle AI Database 26ai
         CM
         VS
     end
+```
+
+### Memory Layers
+
+```mermaid
+graph TD
+    Agent["Agent (ChatClient)"]
+    Agent --> E["Episodic Memory<br/>MessageChatMemoryAdvisor"]
+    Agent --> S["Semantic Memory<br/>QuestionAnswerAdvisor"]
+    Agent --> P["Procedural Memory<br/>@Tool Methods"]
+
+    E --> |"last 100 messages<br/>per conversation"| DB1["SPRING_AI_CHAT_MEMORY table"]
+    S --> |"cosine similarity<br/>top-5, threshold 0.7"| DB2["Vector Store table"]
+    P --> T1["lookupOrderStatus"]
+    P --> T2["initiateReturn"]
+    P --> T3["escalateToSupport"]
 ```
 
 ## Prerequisites
