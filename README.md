@@ -1,6 +1,6 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle AI Vector Search), and procedural memory (`@Tool`-annotated methods the LLM can call to perform actions).
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle AI Vector Search), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Demo data (8 orders + 3 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
 
 ## Architecture
 
@@ -11,10 +11,12 @@ graph LR
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
     API --> VS["Vector Store Table<br/>(semantic memory)"]
     API --> PM["@Tool Methods<br/>(procedural memory)"]
+    PM --> OT["Order & Ticket Tables"]
 
     subgraph Oracle AI Database 26ai
         CM
         VS
+        OT
     end
 ```
 
@@ -29,9 +31,11 @@ graph TD
 
     E --> |"last 100 messages<br/>per conversation"| DB1["SPRING_AI_CHAT_MEMORY table"]
     S --> |"cosine similarity<br/>top-5, threshold 0.7"| DB2["Vector Store table"]
-    P --> T1["lookupOrderStatus"]
-    P --> T2["initiateReturn"]
-    P --> T3["escalateToSupport"]
+    P --> T1["listOrders"]
+    P --> T2["lookupOrderStatus"]
+    P --> T3["initiateReturn"]
+    P --> T4["escalateToSupport"]
+    P --> T5["listSupportTickets"]
 ```
 
 ## Prerequisites
@@ -98,10 +102,28 @@ Chat (with conversation memory):
 curl -X POST http://localhost:8080/api/v1/agent/chat \
   -H "Content-Type: text/plain" \
   -H "X-Conversation-Id: test-1" \
-  -d "Hello, what can you help me with?"
+  -d "What orders do I have?"
 ```
 
-Add knowledge (for RAG retrieval):
+Ask about policies (semantic memory -- auto-seeded on startup):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agent/chat \
+  -H "Content-Type: text/plain" \
+  -H "X-Conversation-Id: test-1" \
+  -d "What's your return policy?"
+```
+
+Use tools (procedural memory):
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agent/chat \
+  -H "Content-Type: text/plain" \
+  -H "X-Conversation-Id: test-1" \
+  -d "I want to return order ORD-1001, the product was defective."
+```
+
+Add custom knowledge (for RAG retrieval):
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/agent/knowledge \

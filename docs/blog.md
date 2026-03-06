@@ -4,7 +4,7 @@ Every LLM has the same problem: it forgets everything the moment the conversatio
 
 If you want to build an AI *agent* -- something that actually remembers context and knows things about your domain -- you need to give it memory. The practical kind, where it actually remembers what you said and can look up facts you taught it.
 
-This is a POC I built to do exactly that. Three types of memory, one database, about 150 lines of Java.
+This is a POC I built to do exactly that. Three types of memory, one database, a few hundred lines of Java.
 
 ## Three Kinds of Memory
 
@@ -24,7 +24,7 @@ graph TD
     Controller --> Tools["AgentTools<br/>(procedural memory)"]
     EpisodicAdvisor --> ChatTable["SPRING_AI_CHAT_MEMORY table<br/>(last 100 messages)"]
     SemanticAdvisor --> VectorTable["VECTOR_STORE table<br/>(cosine similarity, top 5)"]
-    Tools --> ExternalSystems["Order System, Returns,<br/>Support Tickets"]
+    Tools --> OrdersTable["CUSTOMER_ORDER table<br/>SUPPORT_TICKET table"]
     ChatTable --> LLM["OCI Generative AI<br/>(LLM inference)"]
     VectorTable --> LLM
     Tools --> LLM
@@ -32,6 +32,7 @@ graph TD
     subgraph Oracle AI Database 26ai
         ChatTable
         VectorTable
+        OrdersTable
     end
 ```
 
@@ -63,52 +64,70 @@ The stack:
 
 ## The Procedural Memory (Tools)
 
-Before we look at the controller, let's see the tools. Procedural memory is implemented as `@Tool`-annotated methods in a Spring component:
+Before we look at the controller, let's see the tools. Procedural memory is implemented as `@Tool`-annotated methods in a Spring component that query real database tables:
 
 ```java
 @Component
 public class AgentTools {
 
+    private final OrderRepository orderRepository;
+    private final SupportTicketRepository supportTicketRepository;
+
+    public AgentTools(OrderRepository orderRepository,
+                      SupportTicketRepository supportTicketRepository) {
+        this.orderRepository = orderRepository;
+        this.supportTicketRepository = supportTicketRepository;
+    }
+
+    @Tool(description = "List all customer orders.")
+    public String listOrders() {
+        List<CustomerOrder> orders = orderRepository.findAll();
+        // format and return order list
+    }
+
     @Tool(description = "Look up the status of a customer order by its order ID. " +
             "Returns the current status including shipping information.")
     public String lookupOrderStatus(
-            @ToolParam(description = "The order ID to look up, e.g. ORD-12345") String orderId) {
-        // In a real system this would query a database
-        return "Order %s: Status SHIPPED. Shipped on 2026-03-04 via Express."
-                .formatted(orderId);
+            @ToolParam(description = "The order ID to look up, e.g. ORD-1001") String orderId) {
+        Optional<CustomerOrder> opt = orderRepository.findByOrderId(orderId);
+        // return full order details or "not found"
     }
 
     @Tool(description = "Initiate a product return for a given order. " +
-            "Validates the order, checks the return window, and creates a return label.")
+            "Validates the order exists, checks that it is in DELIVERED status, " +
+            "and verifies the return is within the 30-day return window.")
     public String initiateReturn(
             @ToolParam(description = "The order ID to return") String orderId,
             @ToolParam(description = "The reason for the return") String reason) {
-        // Simulated multi-step return procedure
-        return """
-                Return initiated for order %s.
-                Step 1: Order validated.
-                Step 2: Return window checked -- within 30-day policy.
-                Step 3: Return label created -- RET-%s-001."""
-                .formatted(orderId, orderId);
+        // validates DELIVERED status + 30-day window, sets status to PREPARING_RETURN
     }
 
-    @Tool(description = "Escalate an issue to a human support agent.")
+    @Tool(description = "Escalate an issue to a human support agent. " +
+            "Creates a support ticket in the system.")
     public String escalateToSupport(
             @ToolParam(description = "Brief description of the issue") String issue,
-            @ToolParam(description = "Priority level: low, medium, or high") String priority) {
-        return "Ticket created: SUP-2026-0042. Priority: %s."
-                .formatted(priority.toUpperCase());
+            @ToolParam(description = "Priority level: low, medium, or high") String priority,
+            @ToolParam(description = "The related order ID, if applicable.") String orderId) {
+        SupportTicket ticket = new SupportTicket(orderId, issue, priority.toUpperCase());
+        supportTicketRepository.save(ticket);
+        // return ticket ID + ETA
+    }
+
+    @Tool(description = "List all support tickets.")
+    public String listSupportTickets() {
+        List<SupportTicket> tickets = supportTicketRepository.findAll();
+        // format and return ticket list
     }
 }
 ```
 
-Each method encodes a procedure the agent knows how to execute. The `@Tool` description tells the LLM *when* to use it, and `@ToolParam` describes what arguments to pass. When the user says "I want to return order ORD-123," the LLM reads the tool descriptions, decides `initiateReturn` is the right procedure, extracts the arguments from the conversation, calls the method, and incorporates the result into its response.
+Each method encodes a procedure the agent knows how to execute. The `@Tool` description tells the LLM *when* to use it, and `@ToolParam` describes what arguments to pass. When the user says "I want to return order ORD-1001," the LLM reads the tool descriptions, decides `initiateReturn` is the right procedure, extracts the arguments from the conversation, calls the method, and incorporates the result into its response.
 
-These are simulated for the POC, but the pattern is real. In production, `lookupOrderStatus` would query a database, `initiateReturn` would call a returns microservice, and `escalateToSupport` would create a ticket in your issue tracker. The LLM decides *when* to act; the Java methods define *how*.
+The tools query real JPA entities (`CustomerOrder`, `SupportTicket`) backed by Oracle Database tables. `initiateReturn` validates that the order is in DELIVERED status and within the 30-day return window before changing its status. `escalateToSupport` creates a persistent ticket. The LLM decides *when* to act; the Java methods define *how*.
 
 ## The Controller
 
-The entire agent is two files -- the controller and the tools. Here's the controller, slightly trimmed:
+The controller wires everything together. Here it is, slightly trimmed:
 
 ```java
 @RestController
@@ -173,7 +192,7 @@ public class AgentController {
 }
 ```
 
-Two endpoints, two advisors, one set of tools, one `ChatClient`. Let's break down the three memory types.
+Two endpoints, two advisors, five tools, one `ChatClient`. Let's break down the three memory types.
 
 ### Episodic Memory (Advisors)
 
@@ -187,7 +206,7 @@ Spring AI's advisor pattern is where the magic lives. Advisors intercept every c
 
 ### Procedural Memory (Tools)
 
-**`AgentTools`** handles procedural memory. The `.defaultTools(agentTools)` call registers all `@Tool`-annotated methods from the component. On every request, the LLM receives the tool descriptions alongside the user's message. If the task requires action -- not just knowledge retrieval -- the LLM calls the appropriate tool, gets the result, and weaves it into its response. Spring AI handles the tool-calling protocol automatically.
+**`AgentTools`** handles procedural memory. The `.defaultTools(agentTools)` call registers all five `@Tool`-annotated methods from the component. On every request, the LLM receives the tool descriptions alongside the user's message. If the task requires action -- not just knowledge retrieval -- the LLM calls the appropriate tool, gets the result, and weaves it into its response. Spring AI handles the tool-calling protocol automatically.
 
 All three memory types run on every request. The agent simultaneously remembers what you said, looks up relevant knowledge, and knows how to perform tasks.
 
@@ -195,12 +214,20 @@ All three memory types run on every request. The agent simultaneously remembers 
 
 The `/knowledge` endpoint is simple: POST some text, it gets wrapped in a `Document`, embedded into a vector (via OCI's Cohere embedding model), and stored in Oracle's vector store table. Next time someone asks a related question, the `QuestionAnswerAdvisor` will find it.
 
+### Seed Data
+
+A `DataSeeder` (Spring `CommandLineRunner`) populates the database on startup with 8 demo orders and 3 policy documents (return, shipping, support policies). Orders use relative dates so the 30-day return window logic always works for demo purposes. The seeder checks if orders already exist to avoid duplicates on restarts.
+
 ## The Configuration
 
 Most of the work is in `application.yaml`:
 
 ```yaml
 spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+
   datasource:
     url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/freepdb1}
     username: ${DB_USERNAME:spring_ai_user}
@@ -241,7 +268,7 @@ spring:
 
 A few things worth noting:
 
-- **`initialize-schema: true/always`** means Spring AI creates the `SPRING_AI_CHAT_MEMORY` and vector store tables automatically on startup. No SQL scripts, no Flyway migrations.
+- **`ddl-auto: update`** lets Hibernate create the `CUSTOMER_ORDER` and `SUPPORT_TICKET` tables automatically. Combined with Spring AI's **`initialize-schema: true/always`** for the `SPRING_AI_CHAT_MEMORY` and vector store tables, there are no SQL scripts or Flyway migrations needed.
 - **384 dimensions** matches the Cohere embed-english-light-v2.0 model's output. If you swap the embedding model, change this number.
 - **Oracle UCP** (Universal Connection Pool) handles connection pooling. It's configured as the datasource type, so both the chat memory JDBC queries and the vector store operations share the same pool.
 - **COSINE** distance is the standard choice for text similarity.
@@ -340,21 +367,13 @@ curl -X POST http://localhost:8080/api/v1/agent/chat \
   -d "Hello, what can you help me with?"
 ```
 
-Teach it something:
-
-```bash
-curl -X POST http://localhost:8080/api/v1/agent/knowledge \
-  -H "Content-Type: text/plain" \
-  -d "The company's return policy allows returns within 30 days of purchase."
-```
-
-Ask about what you taught it:
+Ask about policies (semantic memory -- policies are auto-seeded on startup):
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/agent/chat \
   -H "Content-Type: text/plain" \
   -H "X-Conversation-Id: test-1" \
-  -d "What's the return policy?"
+  -d "What's your return policy?"
 ```
 
 Use procedural memory (the agent calls the right tool automatically):
@@ -363,7 +382,14 @@ Use procedural memory (the agent calls the right tool automatically):
 curl -X POST http://localhost:8080/api/v1/agent/chat \
   -H "Content-Type: text/plain" \
   -H "X-Conversation-Id: test-1" \
-  -d "Can you check the status of order ORD-12345?"
+  -d "What orders do I have?"
+```
+
+```bash
+curl -X POST http://localhost:8080/api/v1/agent/chat \
+  -H "Content-Type: text/plain" \
+  -H "X-Conversation-Id: test-1" \
+  -d "Can you check the status of order ORD-1001?"
 ```
 
 ```bash
@@ -380,10 +406,9 @@ This is a proof of concept. It demonstrates that you can give an AI agent three 
 What it isn't:
 
 - **Not production-hardened.** There's no authentication, no rate limiting, no streaming responses.
-- **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral. You could swap Oracle for PostgreSQL + pgvector and the controller code wouldn't change. Oracle is what I used because it handles both the relational chat history and the vector store in one database, and Oracle AI Vector Search works well for this use case.
-- **Tools are simulated.** The procedural memory tools return hardcoded responses. In production, they'd call real services. The point is the pattern -- the LLM decides when to act, and Java methods define how.
+- **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral. You could swap Oracle for PostgreSQL + pgvector and the controller code wouldn't change. Oracle is what I used because it handles the relational chat history, the vector store, and the order/ticket tables all in one database, and Oracle AI Vector Search works well for this use case.
 
-The whole point is that agent memory doesn't have to be complicated. Two advisors, a few tools, one database, and the LLM stops forgetting.
+The whole point is that agent memory doesn't have to be complicated. Two advisors, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
 
 ---
 
