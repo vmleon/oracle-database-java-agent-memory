@@ -29,6 +29,7 @@ graph LR
 ### 1. Start Oracle Database
 
 ```bash
+mkdir -p ./oradata
 podman run -d --name oradb \
   -p 1521:1521 \
   -e ORACLE_PWD=Oracle123 \
