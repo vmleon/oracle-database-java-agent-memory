@@ -66,7 +66,15 @@ podman logs -f oradb
 
 Wait for "DATABASE IS READY TO USE!" in the logs before continuing.
 
-### 2. Set up the local profile
+### 2. Grant database privileges
+
+The `PDBADMIN` user needs `CREATE TABLE` privileges to allow Spring Boot to auto-create tables on startup:
+
+```bash
+podman exec -i oradb sqlplus sys/Oracle123@freepdb1 as sysdba < setup-db.sql
+```
+
+### 3. Set up the local profile
 
 ```bash
 cd src/chatserver/src/main/resources
@@ -85,20 +93,26 @@ oci generative-ai model-collection list-models \
   --compartment-id <your-compartment-ocid> \
   --capability CHAT \
   --query "data.items[].{name:\"display-name\", id:id}"
+
+# List available embedding models in your compartment
+oci generative-ai model-collection list-models \
+  --compartment-id <your-compartment-ocid> \
+  --capability TEXT_EMBEDDINGS \
+  --query "data.items[].{name:\"display-name\", id:id}"
 ```
 
 OCI auth defaults to `~/.oci/config` with the `DEFAULT` profile.
 
-### 3. Start the Chat Server
+### 4. Start the Chat Server
 
 ```bash
 cd src/chatserver
 ./gradlew bootRun --args='--spring.profiles.active=local'
 ```
 
-The local profile uses the `PDBADMIN` user that already exists in the Oracle Free container -- no database setup needed.
+The local profile uses the `PDBADMIN` user that already exists in the Oracle Free container (privileges granted in step 2).
 
-### 4. Start the Web UI
+### 5. Start the Web UI
 
 ```bash
 cd src/web
@@ -108,7 +122,7 @@ streamlit run app.py
 
 Opens on `http://localhost:8501`.
 
-### 5. Test with curl
+### 6. Test with curl
 
 Chat (with conversation memory):
 
@@ -171,21 +185,21 @@ When **not** using the `local` profile, set:
 
 | Variable          | Description               |
 | ----------------- | ------------------------- |
-| `OCI_GENAI_MODEL` | OCI GenAI chat model OCID |
-| `OCI_COMPARTMENT` | OCI compartment OCID      |
-| `DB_PASSWORD`     | Oracle Database password  |
+| `OCI_GENAI_MODEL`    | OCI GenAI chat model OCID          |
+| `OCI_COMPARTMENT`    | OCI compartment OCID               |
+| `OCI_EMBEDDING_MODEL`| OCI embedding model for vector store|
+| `DB_PASSWORD`        | Oracle Database password            |
 
 ### Optional (with defaults)
 
 | Variable              | Default                                       | Description                          |
 | --------------------- | --------------------------------------------- | ------------------------------------ |
 | `DB_URL`              | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL                  |
-| `DB_USERNAME`         | `spring_ai_user`                              | Database username                    |
+| `DB_USERNAME`         | `pdbadmin`                                    | Database username                    |
 | `OCI_REGION`          | `us-chicago-1`                                | OCI region                           |
 | `OCI_AUTH_TYPE`       | `file`                                        | OCI authentication type              |
 | `OCI_CONFIG_FILE`     | `~/.oci/config`                               | Path to OCI config file              |
 | `OCI_PROFILE`         | `DEFAULT`                                     | OCI config profile                   |
-| `OCI_EMBEDDING_MODEL` | `cohere.embed-english-light-v2.0`             | OCI embedding model for vector store |
 | `BACKEND_URL`         | `http://localhost:8080`                       | Backend URL (Web UI only)            |
 
 ## Cleanup

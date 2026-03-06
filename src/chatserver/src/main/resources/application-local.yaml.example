@@ -15,12 +15,18 @@ spring:
   ai:
     oci:
       genai:
-        chat:
-          options:
-            model: <your-model-ocid>
-            compartment: <your-compartment-ocid>
+        cohere:
+          chat:
+            options:
+              model: <your-model-ocid>
+              compartment: <your-compartment-ocid>
         embedding:
+          model: <your-model-ocid>
           compartment: <your-compartment-ocid>
+    vectorstore:
+      oracle:
+        dimensions: 1024
+        forced-normalization: true
 
 logging:
   level:

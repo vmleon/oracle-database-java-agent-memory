@@ -230,7 +230,7 @@ spring:
 
   datasource:
     url: ${DB_URL:jdbc:oracle:thin:@//localhost:1521/freepdb1}
-    username: ${DB_USERNAME:spring_ai_user}
+    username: ${DB_USERNAME:pdbadmin}
     password: ${DB_PASSWORD}
     driver-class-name: oracle.jdbc.OracleDriver
     type: oracle.ucp.jdbc.PoolDataSourceImpl
@@ -250,7 +250,7 @@ spring:
             temperature: 0.7
             max-tokens: 2048
         embedding:
-          model: ${OCI_EMBEDDING_MODEL:cohere.embed-english-light-v2.0}
+          model: ${OCI_EMBEDDING_MODEL}
           compartment: ${OCI_COMPARTMENT}
 
     vectorstore:

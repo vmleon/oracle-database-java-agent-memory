@@ -30,7 +30,6 @@ dependencies {
 	implementation 'org.springframework.ai:spring-ai-starter-model-chat-memory-repository-jdbc'
 	implementation 'org.springframework.ai:spring-ai-starter-model-oci-genai'
 	implementation 'org.springframework.ai:spring-ai-starter-vector-store-oracle'
-	implementation 'com.oracle.database.jdbc:ojdbc17:23.26.1.0.0'
 	implementation 'com.oracle.database.spring:oracle-spring-boot-starter-ucp:26.0.0'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
