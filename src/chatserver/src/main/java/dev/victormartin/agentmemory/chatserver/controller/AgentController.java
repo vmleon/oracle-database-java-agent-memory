@@ -13,6 +13,8 @@ import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryReposito
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+
+import dev.victormartin.agentmemory.chatserver.tools.AgentTools;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -33,7 +35,8 @@ public class AgentController {
 
     public AgentController(ChatClient.Builder builder,
                            JdbcChatMemoryRepository chatMemoryRepository,
-                           VectorStore vectorStore) {
+                           VectorStore vectorStore,
+                           AgentTools agentTools) {
         this.vectorStore = vectorStore;
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
@@ -43,10 +46,14 @@ public class AgentController {
 
         this.chatClient = builder
                 .defaultSystem("""
-                        You are a helpful AI assistant with access to a knowledge base. \
+                        You are a helpful AI assistant with access to a knowledge base \
+                        and a set of tools for performing tasks. \
                         When answering questions, use any relevant context provided to you. \
+                        When a user asks you to perform an action (like looking up an order, \
+                        initiating a return, or escalating to support), use the appropriate tool. \
                         If you don't know the answer, say so honestly. \
                         Be concise and direct in your responses.""")
+                .defaultTools(agentTools)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
                         QuestionAnswerAdvisor.builder(vectorStore)
