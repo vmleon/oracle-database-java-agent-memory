@@ -2,6 +2,9 @@
 .DS_Store
 Thumbs.db
 
+# Claude Code
+.claude/
+
 # Podman/Docker Oracle DB volume
 oradata/
 
