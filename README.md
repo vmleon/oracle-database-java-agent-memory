@@ -7,7 +7,7 @@ POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. 
 ```mermaid
 graph LR
     UI["Streamlit UI (:8501)"] --> API["Spring Boot (:8080)"]
-    API --> OCI["OCI Generative AI<br/>(LLM + Embeddings)"]
+    API --> Ollama["Ollama<br/>(LLM + Embeddings)"]
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
     API --> VS["Vector Store Table<br/>(semantic memory)"]
     API --> PM["@Tool Methods<br/>(procedural memory)"]
@@ -43,7 +43,7 @@ graph TD
 - Java 21+
 - Python 3.9+
 - Podman or Docker
-- OCI account with access to Generative AI
+- [Ollama](https://ollama.com/) installed locally
 
 ## Quick Start
 
@@ -74,36 +74,26 @@ The `PDBADMIN` user needs `CREATE TABLE` privileges to allow Spring Boot to auto
 podman exec -i oradb sqlplus sys/Oracle123@freepdb1 as sysdba < setup-db.sql
 ```
 
-### 3. Set up the local profile
+### 3. Install Ollama and pull models
+
+```bash
+brew install ollama
+ollama pull qwen2.5          # chat model with tool calling support
+ollama pull nomic-embed-text  # embedding model
+```
+
+Ollama serves on `http://localhost:11434` by default.
+
+### 4. Set up the local profile
 
 ```bash
 cd src/chatserver/src/main/resources
 cp application-local.yaml.example application-local.yaml
 ```
 
-Edit `application-local.yaml` and fill in your OCI GenAI model OCID and compartment OCID. You can retrieve them with the OCI CLI:
+Ollama defaults (`localhost:11434`, `qwen2.5`, `nomic-embed-text`) are configured in `application.yaml`. The local profile only overrides database credentials and logging.
 
-```bash
-# Get your compartment OCID (replace "MyCompartment" with your compartment name)
-oci iam compartment list --name "MyCompartment" --compartment-id-in-subtree true \
-  --query "data[0].id" --raw-output
-
-# List available GenAI chat models in your compartment
-oci generative-ai model-collection list-models \
-  --compartment-id <your-compartment-ocid> \
-  --capability CHAT \
-  --query "data.items[].{name:\"display-name\", id:id}"
-
-# List available embedding models in your compartment
-oci generative-ai model-collection list-models \
-  --compartment-id <your-compartment-ocid> \
-  --capability TEXT_EMBEDDINGS \
-  --query "data.items[].{name:\"display-name\", id:id}"
-```
-
-OCI auth defaults to `~/.oci/config` with the `DEFAULT` profile.
-
-### 4. Start the Chat Server
+### 5. Start the Chat Server
 
 ```bash
 cd src/chatserver
@@ -112,7 +102,7 @@ cd src/chatserver
 
 The local profile uses the `PDBADMIN` user that already exists in the Oracle Free container (privileges granted in step 2).
 
-### 5. Start the Web UI
+### 6. Start the Web UI
 
 ```bash
 cd src/web
@@ -122,7 +112,7 @@ streamlit run app.py
 
 Opens on `http://localhost:8501`.
 
-### 6. Test with curl
+### 7. Test with curl
 
 Chat (with conversation memory):
 
@@ -179,15 +169,12 @@ Add domain knowledge to the vector store for RAG retrieval.
 
 ## Environment Variables
 
-When using the `local` profile, OCI model and compartment are configured in `application-local.yaml` (see Quick Start step 2). No env var exports needed.
+When using the `local` profile, Ollama defaults and database credentials are already configured. No env var exports needed.
 
 When **not** using the `local` profile, set:
 
 | Variable          | Description               |
 | ----------------- | ------------------------- |
-| `OCI_GENAI_MODEL`    | OCI GenAI chat model OCID          |
-| `OCI_COMPARTMENT`    | OCI compartment OCID               |
-| `OCI_EMBEDDING_MODEL`| OCI embedding model for vector store|
 | `DB_PASSWORD`        | Oracle Database password            |
 
 ### Optional (with defaults)
@@ -196,11 +183,25 @@ When **not** using the `local` profile, set:
 | --------------------- | --------------------------------------------- | ------------------------------------ |
 | `DB_URL`              | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL                  |
 | `DB_USERNAME`         | `pdbadmin`                                    | Database username                    |
-| `OCI_REGION`          | `us-chicago-1`                                | OCI region                           |
-| `OCI_AUTH_TYPE`       | `file`                                        | OCI authentication type              |
-| `OCI_CONFIG_FILE`     | `~/.oci/config`                               | Path to OCI config file              |
-| `OCI_PROFILE`         | `DEFAULT`                                     | OCI config profile                   |
+| `OLLAMA_BASE_URL`     | `http://localhost:11434`                      | Ollama server URL                    |
+| `OLLAMA_CHAT_MODEL`   | `qwen2.5`                                    | Ollama chat model                    |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text`                         | Ollama embedding model               |
 | `BACKEND_URL`         | `http://localhost:8080`                       | Backend URL (Web UI only)            |
+
+## Switching to Other Providers
+
+Spring AI's abstraction layer makes switching providers a dependency + config change — no Java code changes needed:
+
+| Provider | Dependency | Config prefix |
+|---|---|---|
+| Ollama (local) | `spring-ai-starter-model-ollama` | `spring.ai.ollama` |
+| OpenAI | `spring-ai-starter-model-openai` | `spring.ai.openai` |
+| Anthropic | `spring-ai-starter-model-anthropic` | `spring.ai.anthropic` |
+| GCP Vertex AI | `spring-ai-starter-model-vertex-ai` | `spring.ai.vertex.ai` |
+| Azure OpenAI | `spring-ai-starter-model-azure-openai` | `spring.ai.azure.openai` |
+| OCI GenAI | `spring-ai-starter-model-oci-genai` | `spring.ai.oci.genai` |
+
+Only `build.gradle` dependency and `application.yaml` config need to change.
 
 ## Cleanup
 

@@ -12,21 +12,15 @@ spring:
       min-pool-size: 2
       max-pool-size: 5
 
-  ai:
-    oci:
-      genai:
-        cohere:
-          chat:
-            options:
-              model: <your-model-ocid>
-              compartment: <your-compartment-ocid>
-        embedding:
-          model: <your-model-ocid>
-          compartment: <your-compartment-ocid>
-    vectorstore:
-      oracle:
-        dimensions: 1024
-        forced-normalization: true
+  # Ollama defaults (http://localhost:11434, qwen2.5, nomic-embed-text) are
+  # set in application.yaml. Override here only if needed:
+  # ai:
+  #   ollama:
+  #     base-url: http://localhost:11434
+  #     chat:
+  #       model: qwen2.5
+  #     embedding:
+  #       model: nomic-embed-text
 
 logging:
   level:

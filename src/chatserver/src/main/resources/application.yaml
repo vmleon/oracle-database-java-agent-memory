@@ -19,28 +19,18 @@ spring:
       max-pool-size: 20
 
   ai:
-    oci:
-      genai:
-        authentication-type: ${OCI_AUTH_TYPE:file}
-        file: ${OCI_CONFIG_FILE:~/.oci/config}
-        profile: ${OCI_PROFILE:DEFAULT}
-        region: ${OCI_REGION:us-chicago-1}
-        cohere:
-          chat:
-            options:
-              model: ${OCI_GENAI_MODEL}
-              compartment: ${OCI_COMPARTMENT}
-              serving-mode: on-demand
-              temperature: 0.7
-              max-tokens: 2048
-        embedding:
-          model: ${OCI_EMBEDDING_MODEL}
-          compartment: ${OCI_COMPARTMENT}
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        model: ${OLLAMA_CHAT_MODEL:qwen2.5}
+      embedding:
+        model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
 
     vectorstore:
       oracle:
         initialize-schema: true
         distance-type: COSINE
+        dimensions: 768
 
     chat:
       memory:
