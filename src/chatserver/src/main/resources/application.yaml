@@ -31,6 +31,7 @@ spring:
         initialize-schema: true
         distance-type: COSINE
         dimensions: 768
+        forced-normalization: true
 
     chat:
       memory:

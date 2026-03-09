@@ -12,15 +12,13 @@ spring:
       min-pool-size: 2
       max-pool-size: 5
 
-  # Ollama defaults (http://localhost:11434, qwen2.5, nomic-embed-text) are
-  # set in application.yaml. Override here only if needed:
-  # ai:
-  #   ollama:
-  #     base-url: http://localhost:11434
-  #     chat:
-  #       model: qwen2.5
-  #     embedding:
-  #       model: nomic-embed-text
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: qwen2.5
+      embedding:
+        model: nomic-embed-text
 
 logging:
   level:

@@ -74,15 +74,40 @@ The `PDBADMIN` user needs `CREATE TABLE` privileges to allow Spring Boot to auto
 podman exec -i oradb sqlplus sys/Oracle123@freepdb1 as sysdba < setup-db.sql
 ```
 
-### 3. Install Ollama and pull models
+### 3. Install Ollama, start the server, and pull models
 
 ```bash
 brew install ollama
+```
+
+On macOS, `brew install` starts Ollama as a background service automatically. If it's not running, start it manually:
+
+```bash
+ollama serve
+```
+
+This runs in the foreground on `http://localhost:11434` — open a new terminal for the next steps. If you get `Error: address already in use`, the server is already running — skip this step.
+
+Verify it's running:
+
+```bash
+curl -s http://localhost:11434/api/tags | jq .
+```
+
+Pull the required models:
+
+```bash
 ollama pull qwen2.5          # chat model with tool calling support
 ollama pull nomic-embed-text  # embedding model
 ```
 
-Ollama serves on `http://localhost:11434` by default.
+Check the models are available:
+
+```bash
+ollama list
+```
+
+You should see both `qwen2.5` and `nomic-embed-text` in the output.
 
 ### 4. Set up the local profile
 
@@ -173,39 +198,52 @@ When using the `local` profile, Ollama defaults and database credentials are alr
 
 When **not** using the `local` profile, set:
 
-| Variable          | Description               |
-| ----------------- | ------------------------- |
-| `DB_PASSWORD`        | Oracle Database password            |
+| Variable      | Description              |
+| ------------- | ------------------------ |
+| `DB_PASSWORD` | Oracle Database password |
 
 ### Optional (with defaults)
 
-| Variable              | Default                                       | Description                          |
-| --------------------- | --------------------------------------------- | ------------------------------------ |
-| `DB_URL`              | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL                  |
-| `DB_USERNAME`         | `pdbadmin`                                    | Database username                    |
-| `OLLAMA_BASE_URL`     | `http://localhost:11434`                      | Ollama server URL                    |
-| `OLLAMA_CHAT_MODEL`   | `qwen2.5`                                    | Ollama chat model                    |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text`                         | Ollama embedding model               |
-| `BACKEND_URL`         | `http://localhost:8080`                       | Backend URL (Web UI only)            |
+| Variable                 | Default                                       | Description               |
+| ------------------------ | --------------------------------------------- | ------------------------- |
+| `DB_URL`                 | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL       |
+| `DB_USERNAME`            | `pdbadmin`                                    | Database username         |
+| `OLLAMA_BASE_URL`        | `http://localhost:11434`                      | Ollama server URL         |
+| `OLLAMA_CHAT_MODEL`      | `qwen2.5`                                     | Ollama chat model         |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text`                            | Ollama embedding model    |
+| `BACKEND_URL`            | `http://localhost:8080`                       | Backend URL (Web UI only) |
 
 ## Switching to Other Providers
 
 Spring AI's abstraction layer makes switching providers a dependency + config change — no Java code changes needed:
 
-| Provider | Dependency | Config prefix |
-|---|---|---|
-| Ollama (local) | `spring-ai-starter-model-ollama` | `spring.ai.ollama` |
-| OpenAI | `spring-ai-starter-model-openai` | `spring.ai.openai` |
-| Anthropic | `spring-ai-starter-model-anthropic` | `spring.ai.anthropic` |
-| GCP Vertex AI | `spring-ai-starter-model-vertex-ai` | `spring.ai.vertex.ai` |
-| Azure OpenAI | `spring-ai-starter-model-azure-openai` | `spring.ai.azure.openai` |
-| OCI GenAI | `spring-ai-starter-model-oci-genai` | `spring.ai.oci.genai` |
+| Provider       | Dependency                             | Config prefix            |
+| -------------- | -------------------------------------- | ------------------------ |
+| Ollama (local) | `spring-ai-starter-model-ollama`       | `spring.ai.ollama`       |
+| OpenAI         | `spring-ai-starter-model-openai`       | `spring.ai.openai`       |
+| Anthropic      | `spring-ai-starter-model-anthropic`    | `spring.ai.anthropic`    |
+| GCP Vertex AI  | `spring-ai-starter-model-vertex-ai`    | `spring.ai.vertex.ai`    |
+| Azure OpenAI   | `spring-ai-starter-model-azure-openai` | `spring.ai.azure.openai` |
+| OCI GenAI      | `spring-ai-starter-model-oci-genai`    | `spring.ai.oci.genai`    |
 
 Only `build.gradle` dependency and `application.yaml` config need to change.
 
 ## Cleanup
 
+### Oracle Database
+
 ```bash
 podman rm -f oradb
 rm -rf ./oradata
 ```
+
+### Ollama
+
+Delete the pulled models:
+
+```bash
+ollama rm qwen2.5
+ollama rm nomic-embed-text
+```
+
+Press Ctrl+C to stop the Ollama server
