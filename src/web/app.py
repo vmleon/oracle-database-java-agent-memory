@@ -1,30 +1,62 @@
 import os
+import pathlib
 import uuid
 
 import requests
 import streamlit as st
 
-st.title("Chat")
+# --- Constants ---
+FAVICON = pathlib.Path(__file__).parent / "favicon.ico"
+PAGE_TITLE = "ShopAssist"
+WELCOME_MESSAGE = (
+    "Welcome to **ShopAssist**! I'm your AI customer support assistant. "
+    "I can help you with:\n\n"
+    "- **View your orders** and check order status\n"
+    "- **Initiate returns** (within 30 days of delivery)\n"
+    "- **Answer policy questions** (returns, shipping, support)\n"
+    "- **Escalate issues** to a human support agent\n\n"
+    "How can I help you today?"
+)
+QUICK_PROMPTS = [
+    "Show my orders",
+    "What's the status of ORD-1001?",
+    "I want to return ORD-1008",
+    "What's your return policy?",
+]
 
-# Sidebar config
+# --- Page config ---
+st.set_page_config(page_title=PAGE_TITLE, page_icon=str(FAVICON))
+st.title(PAGE_TITLE)
+st.caption("Customer support powered by AI with Oracle Database")
+
+# --- Sidebar ---
+st.sidebar.header("Settings")
 backend_url = st.sidebar.text_input(
     "Backend URL",
     value=os.getenv("BACKEND_URL", "http://localhost:8080"),
 )
 
-# Session state init
+if st.sidebar.button("New Conversation"):
+    st.session_state.conversation_id = str(uuid.uuid4())
+    st.session_state.messages = []
+    st.rerun()
+
+# --- Session state init ---
 if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+st.sidebar.caption(f"Conversation: `{st.session_state.conversation_id[:8]}…`")
 
-# Handle input
-if prompt := st.chat_input("Type a message..."):
+# --- Welcome message ---
+if not st.session_state.messages:
+    st.session_state.messages.append({"role": "assistant", "content": WELCOME_MESSAGE})
+
+
+# --- Helper ---
+def send_message(prompt, url):
+    """Send a prompt to the backend and append both messages to history."""
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -33,7 +65,7 @@ if prompt := st.chat_input("Type a message..."):
         with st.spinner("Thinking..."):
             try:
                 resp = requests.post(
-                    f"{backend_url.rstrip('/')}/api/v1/agent/chat",
+                    f"{url.rstrip('/')}/api/v1/agent/chat",
                     data=prompt,
                     headers={
                         "Content-Type": "text/plain",
@@ -47,3 +79,26 @@ if prompt := st.chat_input("Type a message..."):
                 answer = f"Error contacting backend: {e}"
         st.markdown(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+# --- Render history ---
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# --- Quick-start buttons (only on fresh conversation with just the welcome) ---
+if len(st.session_state.messages) == 1:
+    cols = st.columns(len(QUICK_PROMPTS))
+    for col, qp in zip(cols, QUICK_PROMPTS):
+        if col.button(qp, use_container_width=True):
+            st.session_state.pending_prompt = qp
+            st.rerun()
+
+# --- Handle pending prompt from button click ---
+if "pending_prompt" in st.session_state:
+    prompt = st.session_state.pop("pending_prompt")
+    send_message(prompt, backend_url)
+
+# --- Handle chat input ---
+if prompt := st.chat_input("Type a message..."):
+    send_message(prompt, backend_url)
