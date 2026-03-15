@@ -211,6 +211,33 @@ Why hybrid instead of pure vector search? Dense embeddings capture meaning -- a 
 
 All three memory types run on every request. The agent simultaneously remembers what you said, looks up relevant knowledge, and knows how to perform tasks.
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant Episodic as Episodic Memory<br/>(MessageChatMemoryAdvisor)
+    participant Semantic as Semantic Memory<br/>(RetrievalAugmentationAdvisor)
+    participant DB as Oracle Database
+    participant LLM as Ollama (qwen2.5)
+    participant Tools as Procedural Memory<br/>(AgentTools)
+
+    User->>Episodic: user message
+    Episodic->>DB: load last 100 messages
+    DB-->>Episodic: chat history
+    Episodic->>Semantic: prompt + history
+    Semantic->>LLM: rewrite query
+    LLM-->>Semantic: cleaned query
+    Semantic->>DB: DBMS_HYBRID_VECTOR.SEARCH
+    DB-->>Semantic: top 5 docs (RRF-ranked)
+    Semantic->>LLM: prompt + history + docs + tool descriptions
+    LLM->>Tools: tool call (if needed)
+    Tools->>DB: JPA query
+    DB-->>Tools: result
+    Tools-->>LLM: tool response
+    LLM-->>Episodic: final response
+    Episodic->>DB: save exchange
+    Episodic-->>User: response
+```
+
 ### The Knowledge Endpoint
 
 The `/knowledge` endpoint is simple: POST some text, it gets inserted into the `POLICY_DOCS` table via JDBC. The hybrid vector index handles embedding automatically using the in-database ONNX model -- no external embedding API call needed. Next time someone asks a related question, the hybrid search will find it.

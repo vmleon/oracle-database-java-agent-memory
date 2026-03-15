@@ -1,6 +1,6 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle Hybrid Vector Search — vector similarity + keyword/fuzzy search fused with RRF), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Embeddings are computed in-database using a loaded ONNX model. Demo data (8 orders + 12 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle Hybrid Vector Search — vector similarity + keyword/fuzzy search fused with Reciprocal Rank Fusion), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Embeddings are computed in-database using a loaded ONNX model. Demo data (8 orders + 12 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
 
 ## Architecture
 
@@ -91,7 +91,7 @@ Wait for "DATABASE IS READY TO USE!" in the logs before continuing.
 
 ### 2. Grant database privileges
 
-The `PDBADMIN` user needs `CREATE TABLE` privileges to allow Spring Boot to auto-create tables on startup:
+Grants privileges for JPA, ONNX model loading, Oracle Text, and creates the directory for the ONNX model file:
 
 ```bash
 podman exec -i oradb sqlplus sys/Oracle123@freepdb1 as sysdba < setup-db.sql
