@@ -32,7 +32,7 @@ public class AgentTools {
 
     @Tool(description = "List all customer orders. Returns a summary of every order including order ID, product, status, and purchase date.")
     public String listOrders() {
-        log.info("Procedural memory: listing all orders");
+        log.info("[PROCEDURAL] listing all orders");
         List<CustomerOrder> orders = orderRepository.findAll();
         if (orders.isEmpty()) {
             return "No orders found.";
@@ -50,7 +50,7 @@ public class AgentTools {
             "Returns the current status including shipping information.")
     public String lookupOrderStatus(
             @ToolParam(description = "The order ID to look up, e.g. ORD-1001") String orderId) {
-        log.info("Procedural memory: looking up order status for {}", orderId);
+        log.info("[PROCEDURAL] looking up order status for {}", orderId);
         Optional<CustomerOrder> opt = orderRepository.findByOrderId(orderId);
         if (opt.isEmpty()) {
             return "Order %s not found.".formatted(orderId);
@@ -68,7 +68,7 @@ public class AgentTools {
     public String initiateReturn(
             @ToolParam(description = "The order ID to return") String orderId,
             @ToolParam(description = "The reason for the return") String reason) {
-        log.info("Procedural memory: initiating return for order {} reason: {}", orderId, reason);
+        log.info("[PROCEDURAL] initiating return for order {} reason: {}", orderId, reason);
         Optional<CustomerOrder> opt = orderRepository.findByOrderId(orderId);
         if (opt.isEmpty()) {
             return "Order %s not found. Cannot initiate return.".formatted(orderId);
@@ -104,7 +104,7 @@ public class AgentTools {
             @ToolParam(description = "Brief description of the issue") String issue,
             @ToolParam(description = "Priority level: low, medium, or high") String priority,
             @ToolParam(description = "The related order ID, if applicable. Use null or empty if not related to an order.") String orderId) {
-        log.info("Procedural memory: escalating to support — issue: {}, priority: {}, orderId: {}", issue, priority, orderId);
+        log.info("[PROCEDURAL] escalating to support — issue: {}, priority: {}, orderId: {}", issue, priority, orderId);
 
         String normalizedOrderId = (orderId == null || orderId.isBlank()) ? null : orderId;
         SupportTicket ticket = new SupportTicket(normalizedOrderId, issue, priority.toUpperCase());
@@ -122,7 +122,7 @@ public class AgentTools {
 
     @Tool(description = "List all support tickets. Returns ticket ID, related order ID, issue, priority, status, and creation date.")
     public String listSupportTickets() {
-        log.info("Procedural memory: listing all support tickets");
+        log.info("[PROCEDURAL] listing all support tickets");
         List<SupportTicket> tickets = supportTicketRepository.findAll();
         if (tickets.isEmpty()) {
             return "No support tickets found.";

@@ -1,8 +1,8 @@
 # Blocker: Spring AI OCI GenAI Adapter Does Not Support Tool Calling
 
 **Date:** 2026-03-09
-**Status:** Open
-**Severity:** Blocker — Procedural memory (`@Tool` methods) is non-functional
+**Status:** Resolved (workaround: migrated to Ollama)
+**Severity:** Was Blocker — resolved by switching from OCI GenAI to Ollama for chat model
 
 ## Problem
 
@@ -63,6 +63,10 @@ No log lines from `AgentTools` methods (which all log `"Procedural memory: ..."`
 2. **Use OpenAI or Anthropic** — Add `spring-ai-starter-model-openai` or `spring-ai-starter-model-anthropic`. Full tool calling support. Requires an API key. Keep OCI GenAI for embeddings.
 
 3. **Wait for Spring AI update** — Future versions of Spring AI may add tool calling support to the OCI GenAI adapter.
+
+## Resolution
+
+Migrated from OCI GenAI to Ollama for the chat model (commit `5279dc2`). The `spring-ai-starter-model-ollama` adapter fully supports tool calling. All 5 `@Tool` methods in `AgentTools` now work correctly. OCI GenAI was removed entirely — Ollama handles both chat (qwen2.5) and embeddings (nomic-embed-text).
 
 ## References
 

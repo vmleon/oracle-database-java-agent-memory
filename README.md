@@ -1,21 +1,23 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle AI Vector Search), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Demo data (8 orders + 3 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle Hybrid Vector Search — vector similarity + keyword/fuzzy search fused with RRF), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Embeddings are computed in-database using a loaded ONNX model. Demo data (8 orders + 12 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
 
 ## Architecture
 
 ```mermaid
 graph LR
     UI["Streamlit UI (:8501)"] --> API["Spring Boot (:8080)"]
-    API --> Ollama["Ollama<br/>(LLM + Embeddings)"]
+    API --> Ollama["Ollama<br/>(LLM chat only)"]
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
-    API --> VS["Vector Store Table<br/>(semantic memory)"]
+    API --> HV["Hybrid Vector Index<br/>(semantic memory)"]
     API --> PM["@Tool Methods<br/>(procedural memory)"]
     PM --> OT["Order & Ticket Tables"]
 
     subgraph Oracle AI Database 26ai
         CM
-        VS
+        HV
+        ONNX["ONNX Model<br/>(all-MiniLM-L12-v2)"]
+        HV --> ONNX
         OT
     end
 ```
@@ -26,16 +28,37 @@ graph LR
 graph TD
     Agent["Agent (ChatClient)"]
     Agent --> E["Episodic Memory<br/>MessageChatMemoryAdvisor"]
-    Agent --> S["Semantic Memory<br/>QuestionAnswerAdvisor"]
+    Agent --> S["Semantic Memory<br/>RetrievalAugmentationAdvisor"]
     Agent --> P["Procedural Memory<br/>@Tool Methods"]
 
     E --> |"last 100 messages<br/>per conversation"| DB1["SPRING_AI_CHAT_MEMORY table"]
-    S --> |"cosine similarity<br/>top-5, threshold 0.7"| DB2["Vector Store table"]
+    S --> |"DBMS_HYBRID_VECTOR.SEARCH<br/>vector + keyword, RRF, top-5"| DB2["POLICY_DOCS table<br/>+ Hybrid Vector Index"]
     P --> T1["listOrders"]
     P --> T2["lookupOrderStatus"]
     P --> T3["initiateReturn"]
     P --> T4["escalateToSupport"]
     P --> T5["listSupportTickets"]
+```
+
+### Query Flow
+
+```mermaid
+graph TD
+    A[User Message] --> B["POST /api/v1/agent/chat"]
+    B --> C["1. Episodic Memory<br/>MessageChatMemoryAdvisor<br/>loads last 100 messages"]
+    C --> D["2. Query Rewriting<br/>RewriteQueryTransformer<br/>LLM cleans typos & abbreviations"]
+    D --> E["3. Hybrid Vector Search<br/>OracleHybridDocumentRetriever"]
+    E --> F["Vector Similarity<br/>(ONNX in-DB)"]
+    E --> G["Keyword + Fuzzy<br/>(Oracle Text)"]
+    F --> H["RRF Fusion → top-5"]
+    G --> H
+    H --> I["4. LLM Call<br/>Ollama qwen2.5"]
+    C -.->|chat history| I
+    I --> J{Tool call?}
+    J -->|yes| K["5. Procedural Memory<br/>@Tool method"]
+    K -.->|tool result| I
+    J -->|no| L["6. Save Exchange"]
+    L --> M[Response]
 ```
 
 ## Prerequisites
@@ -74,7 +97,21 @@ The `PDBADMIN` user needs `CREATE TABLE` privileges to allow Spring Boot to auto
 podman exec -i oradb sqlplus sys/Oracle123@freepdb1 as sysdba < setup-db.sql
 ```
 
-### 3. Install Ollama, start the server, and pull models
+### 3. Set up hybrid vector search
+
+Load the ONNX embedding model into Oracle and create the hybrid vector index. This is a one-time setup.
+
+Download the pre-built `all-MiniLM-L12-v2` ONNX model from [Oracle ML](https://blogs.oracle.com/machinelearning/use-our-prebuilt-onnx-model-now-available-for-embedding-generation-in-oracle-database-23ai), then:
+
+```bash
+podman exec oradb mkdir -p /opt/oracle/dumps
+podman cp all_MiniLM_L12_v2.onnx oradb:/opt/oracle/dumps/
+podman exec -i oradb sqlplus pdbadmin/Oracle123@freepdb1 < setup-hybrid-search.sql
+```
+
+This loads the ONNX model into the database, creates the `POLICY_DOCS` table, and creates a hybrid vector index that combines vector similarity search with Oracle Text keyword/fuzzy search.
+
+### 4. Install Ollama, start the server, and pull the chat model
 
 ```bash
 brew install ollama
@@ -94,31 +131,24 @@ Verify it's running:
 curl -s http://localhost:11434/api/tags | jq .
 ```
 
-Pull the required models:
+Pull the chat model:
 
 ```bash
 ollama pull qwen2.5          # chat model with tool calling support
-ollama pull nomic-embed-text  # embedding model
 ```
 
-Check the models are available:
+Embeddings are computed in-database by the ONNX model loaded in step 3 — no Ollama embedding model needed.
 
-```bash
-ollama list
-```
-
-You should see both `qwen2.5` and `nomic-embed-text` in the output.
-
-### 4. Set up the local profile
+### 5. Set up the local profile
 
 ```bash
 cd src/chatserver/src/main/resources
 cp application-local.yaml.example application-local.yaml
 ```
 
-Ollama defaults (`localhost:11434`, `qwen2.5`, `nomic-embed-text`) are configured in `application.yaml`. The local profile only overrides database credentials and logging.
+Ollama defaults (`localhost:11434`, `qwen2.5`) are configured in `application.yaml`. The local profile only overrides database credentials and logging.
 
-### 5. Start the Chat Server
+### 6. Start the Chat Server
 
 ```bash
 cd src/chatserver
@@ -127,7 +157,7 @@ cd src/chatserver
 
 The local profile uses the `PDBADMIN` user that already exists in the Oracle Free container (privileges granted in step 2).
 
-### 6. Start the Web UI
+### 7. Start the Web UI
 
 ```bash
 cd src/web
@@ -137,7 +167,7 @@ streamlit run app.py
 
 Opens on `http://localhost:8501`.
 
-### 7. Test with curl
+### 8. Test with curl
 
 Chat (with conversation memory):
 
@@ -186,7 +216,7 @@ Chat with the agent. Supports episodic memory (conversation history) and semanti
 
 ### POST /api/v1/agent/knowledge
 
-Add domain knowledge to the vector store for RAG retrieval.
+Add domain knowledge for RAG retrieval. Text is inserted into the `POLICY_DOCS` table; the hybrid vector index handles embedding automatically.
 
 - **Body:** plain text content (max 50,000 chars)
 - **Headers:** `Content-Type: text/plain`
@@ -204,18 +234,17 @@ When **not** using the `local` profile, set:
 
 ### Optional (with defaults)
 
-| Variable                 | Default                                       | Description               |
-| ------------------------ | --------------------------------------------- | ------------------------- |
-| `DB_URL`                 | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL       |
-| `DB_USERNAME`            | `pdbadmin`                                    | Database username         |
-| `OLLAMA_BASE_URL`        | `http://localhost:11434`                      | Ollama server URL         |
-| `OLLAMA_CHAT_MODEL`      | `qwen2.5`                                     | Ollama chat model         |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text`                            | Ollama embedding model    |
-| `BACKEND_URL`            | `http://localhost:8080`                       | Backend URL (Web UI only) |
+| Variable            | Default                                       | Description               |
+| ------------------- | --------------------------------------------- | ------------------------- |
+| `DB_URL`            | `jdbc:oracle:thin:@//localhost:1521/freepdb1` | JDBC connection URL       |
+| `DB_USERNAME`       | `pdbadmin`                                    | Database username         |
+| `OLLAMA_BASE_URL`   | `http://localhost:11434`                      | Ollama server URL         |
+| `OLLAMA_CHAT_MODEL` | `qwen2.5`                                     | Ollama chat model         |
+| `BACKEND_URL`       | `http://localhost:8080`                       | Backend URL (Web UI only) |
 
 ## Switching to Other Providers
 
-Spring AI's abstraction layer makes switching providers a dependency + config change — no Java code changes needed:
+Spring AI's abstraction layer makes switching the chat model provider a dependency + config change — no Java code changes needed:
 
 | Provider       | Dependency                             | Config prefix            |
 | -------------- | -------------------------------------- | ------------------------ |
@@ -226,7 +255,7 @@ Spring AI's abstraction layer makes switching providers a dependency + config ch
 | Azure OpenAI   | `spring-ai-starter-model-azure-openai` | `spring.ai.azure.openai` |
 | OCI GenAI      | `spring-ai-starter-model-oci-genai`    | `spring.ai.oci.genai`    |
 
-Only `build.gradle` dependency and `application.yaml` config need to change.
+Only `build.gradle` dependency and `application.yaml` config need to change. Embeddings are handled in-database by the ONNX model and are not affected by the chat provider choice.
 
 ## Cleanup
 
@@ -239,11 +268,10 @@ rm -rf ./oradata
 
 ### Ollama
 
-Delete the pulled models:
+Delete the pulled model:
 
 ```bash
 ollama rm qwen2.5
-ollama rm nomic-embed-text
 ```
 
 Press Ctrl+C to stop the Ollama server

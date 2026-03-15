@@ -11,22 +11,24 @@ This is a POC I built to do exactly that. Three types of memory, one database, n
 ```mermaid
 graph LR
     UI["Streamlit UI (:8501)"] --> API["Spring Boot (:8080)"]
-    API --> Ollama["Ollama<br/>(LLM + Embeddings)"]
+    API --> Ollama["Ollama<br/>(LLM chat only)"]
     API --> CM["Chat Memory Table<br/>(episodic memory)"]
-    API --> VS["Vector Store Table<br/>(semantic memory)"]
+    API --> HV["Hybrid Vector Index<br/>(semantic memory)"]
     API --> Tools["@Tool methods<br/>(procedural memory)"]
 
     subgraph Oracle AI Database 26ai
         CM
-        VS
+        HV
+        ONNX["ONNX Model<br/>(all-MiniLM-L12-v2)"]
+        HV --> ONNX
     end
 ```
 
 The stack:
 
 - **Spring Boot 3.5.11** + **Spring AI 1.1.2** for the backend
-- **Ollama** for chat inference (qwen2.5) and embeddings (nomic-embed-text), running locally
-- **Oracle AI Database 26ai** for both memory tables (with Oracle AI Vector Search for the semantic side)
+- **Ollama** for chat inference (qwen2.5), running locally
+- **Oracle AI Database 26ai** for all three memory stores, with Hybrid Vector Indexes (vector + keyword search fused with RRF) for semantic retrieval and a loaded ONNX model (all-MiniLM-L12-v2) for in-database embeddings
 - **Streamlit** for a quick-and-dirty web UI (~100 lines of Python)
 - **Java 21**, **Gradle 8.14**
 
@@ -38,7 +40,7 @@ People talk about episodic, semantic, procedural, and working memory for agents.
 
 ![The agent remembers context from earlier in the conversation (episodic memory).](episodic-memory.png)
 
-**Semantic memory** is domain knowledge. You feed the agent facts -- product docs, company policies, whatever -- and it retrieves relevant ones when answering questions. This is RAG (Retrieval-Augmented Generation): text gets embedded into vectors, stored in a vector store, and retrieved by similarity search at query time.
+**Semantic memory** is domain knowledge. You feed the agent facts -- product docs, company policies, whatever -- and it retrieves relevant ones when answering questions. This is RAG (Retrieval-Augmented Generation): text gets converted into dense vectors (embeddings) that map meaning into geometric space, so semantically similar text lands near each other. At query time, the system searches for vectors close to the user's question and injects the matching documents into the LLM prompt. In this POC, embeddings are computed in-database by an ONNX model (all-MiniLM-L12-v2, 384 dimensions) loaded directly into Oracle -- no external embedding API calls.
 
 ![The agent answers a policy question using RAG-retrieved documents (semantic memory).](semantic-memory.png)
 
@@ -50,10 +52,10 @@ People talk about episodic, semantic, procedural, and working memory for agents.
 graph TD
     User["User sends message"] --> Controller["AgentController"]
     Controller --> EpisodicAdvisor["MessageChatMemoryAdvisor<br/>(episodic memory)"]
-    Controller --> SemanticAdvisor["QuestionAnswerAdvisor<br/>(semantic memory)"]
+    Controller --> SemanticAdvisor["RetrievalAugmentationAdvisor<br/>(semantic memory)"]
     Controller --> Tools["AgentTools<br/>(procedural memory)"]
     EpisodicAdvisor --> ChatTable["SPRING_AI_CHAT_MEMORY table<br/>(last 100 messages)"]
-    SemanticAdvisor --> VectorTable["VECTOR_STORE table<br/>(cosine similarity, top 5)"]
+    SemanticAdvisor --> VectorTable["POLICY_DOCS table<br/>(hybrid search: vector + keyword, RRF)"]
     Tools --> OrdersTable["CUSTOMER_ORDER table<br/>SUPPORT_TICKET table"]
     ChatTable --> LLM["Ollama<br/>(qwen2.5)"]
     VectorTable --> LLM
@@ -131,17 +133,25 @@ The controller wires everything together -- two advisors, five tools, one `ChatC
 public class AgentController {
 
     private final ChatClient chatClient;
-    private final VectorStore vectorStore;
+    private final JdbcTemplate jdbcTemplate;
 
     public AgentController(ChatClient.Builder builder,
                            JdbcChatMemoryRepository chatMemoryRepository,
-                           VectorStore vectorStore,
+                           JdbcTemplate jdbcTemplate,
                            AgentTools agentTools) {
-        this.vectorStore = vectorStore;
+        this.jdbcTemplate = jdbcTemplate;
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
                 .chatMemoryRepository(chatMemoryRepository)
                 .maxMessages(100)
+                .build();
+
+        var hybridRetriever = new OracleHybridDocumentRetriever(
+                jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");
+
+        QueryTransformer queryTransformer = RewriteQueryTransformer.builder()
+                .chatClientBuilder(builder.build().mutate())
+                .targetSearchSystem("Oracle hybrid vector search over policy documents")
                 .build();
 
         this.chatClient = builder
@@ -151,11 +161,9 @@ public class AgentController {
                 .defaultTools(agentTools)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
-                        QuestionAnswerAdvisor.builder(vectorStore)
-                                .searchRequest(SearchRequest.builder()
-                                        .topK(5)
-                                        .similarityThreshold(0.7)
-                                        .build())
+                        RetrievalAugmentationAdvisor.builder()
+                                .documentRetriever(hybridRetriever)
+                                .queryTransformers(queryTransformer)
                                 .build()
                 )
                 .build();
@@ -175,13 +183,15 @@ public class AgentController {
 
     @PostMapping("/knowledge")
     public ResponseEntity<String> addKnowledge(@RequestBody String content) {
-        vectorStore.add(List.of(new Document(content)));
+        jdbcTemplate.update(
+                "INSERT INTO POLICY_DOCS (id, content) VALUES (sys_guid(), ?)",
+                content);
         return ResponseEntity.ok("Knowledge added.");
     }
 }
 ```
 
-Two endpoints, two advisors, five tools, one `ChatClient`. Let's break down the three memory types.
+Two endpoints, two advisors, a query transformer, five tools, one `ChatClient`. Let's break down the three memory types.
 
 ### Episodic Memory (Advisors)
 
@@ -191,7 +201,9 @@ Spring AI's advisor pattern is where the magic lives. Advisors intercept every c
 
 ### Semantic Memory (RAG)
 
-**`QuestionAnswerAdvisor`** handles semantic memory. Before each LLM call, it takes the user's question, runs a cosine similarity search against the vector store (top 5 results, 0.7 threshold), and injects any matching documents into the prompt as context. This is the RAG part -- the agent can answer questions about things you've taught it via the `/knowledge` endpoint.
+**`RetrievalAugmentationAdvisor`** handles semantic memory. Before each LLM call, the user's question first passes through a `RewriteQueryTransformer` that uses the LLM to clean up typos and abbreviations (so "retrun polcy" becomes a proper search query). Then a custom `OracleHybridDocumentRetriever` calls `DBMS_HYBRID_VECTOR.SEARCH`, which runs vector similarity search and Oracle Text keyword/fuzzy search in parallel and fuses the results with Reciprocal Rank Fusion (RRF). The top 5 matching documents get injected into the prompt as context.
+
+Why hybrid instead of pure vector search? Dense embeddings capture meaning -- a query about "return policy" will match documents about refunds and exchanges even if those exact words don't appear. But they're weak on exact terms: a query for "ORD-1001" or a misspelled "retrun polcy" degrades because the embedding model encodes semantics, not keywords. Hybrid search covers both: the vector side handles meaning, the keyword side handles exact matches and fuzzy terms, and RRF merges the two result lists by rank position rather than trying to normalize incompatible scores.
 
 ### Procedural Memory (Tools)
 
@@ -201,15 +213,78 @@ All three memory types run on every request. The agent simultaneously remembers 
 
 ### The Knowledge Endpoint
 
-The `/knowledge` endpoint is simple: POST some text, it gets wrapped in a `Document`, embedded into a vector (via nomic-embed-text through Ollama), and stored in Oracle's vector store table. Next time someone asks a related question, the `QuestionAnswerAdvisor` will find it.
+The `/knowledge` endpoint is simple: POST some text, it gets inserted into the `POLICY_DOCS` table via JDBC. The hybrid vector index handles embedding automatically using the in-database ONNX model -- no external embedding API call needed. Next time someone asks a related question, the hybrid search will find it.
 
 ### Seed Data
 
-A `DataSeeder` (Spring `CommandLineRunner`) populates the database on startup with 8 demo orders and 3 policy documents (return, shipping, support policies). Orders use relative dates so the 30-day return window logic always works for demo purposes. The seeder checks if orders already exist to avoid duplicates on restarts.
+A `DataSeeder` (Spring `CommandLineRunner`) populates the database on startup with 8 demo orders and 12 policy documents (return, shipping, support, warranty, payment, cancellation, exchange, international shipping, privacy, promotions, product guarantee, and bulk order policies). The policies are loaded from a `policies.json` resource file and inserted into the `POLICY_DOCS` table via JDBC. Orders use relative dates so the 30-day return window logic always works for demo purposes. The seeder checks existing counts to avoid duplicates on restarts.
+
+## Upgrading Semantic Memory: Hybrid Search
+
+The first version of this POC used Spring AI's `QuestionAnswerAdvisor` with `OracleVectorStore` -- pure vector similarity search with a cosine threshold. It worked for clean, well-phrased questions about policies. But it fell apart on exact terms and typos. A query for "order ORD-1001" would try to match semantically against policy documents, which makes no sense. A misspelled "retrun polcy" would lose similarity score because the embedding model doesn't know it's a typo.
+
+### Oracle Hybrid Vector Indexes
+
+Oracle 26ai provides `DBMS_HYBRID_VECTOR.SEARCH` -- a single PL/SQL call that runs vector similarity search and Oracle Text keyword search in parallel, then fuses the results. The key insight is Reciprocal Rank Fusion (RRF): instead of trying to normalize cosine similarity scores (bounded 0-1) against BM25 keyword scores (unbounded), it ranks documents by their position in each result list. A document that's #1 in vector results and #3 in keyword results gets a combined rank that reflects both signals.
+
+The setup is a one-time SQL script that loads an ONNX embedding model into Oracle and creates a hybrid index:
+
+```sql
+-- Load the ONNX model for in-database embeddings
+BEGIN
+  DBMS_VECTOR.LOAD_ONNX_MODEL(
+    directory  => 'DM_DUMP',
+    file_name  => 'all_MiniLM_L12_v2.onnx',
+    model_name => 'ALL_MINILM_L12_V2'
+  );
+END;
+/
+
+-- Create a hybrid index: vector similarity + Oracle Text keyword search
+CREATE HYBRID VECTOR INDEX POLICY_HYBRID_IDX
+ON POLICY_DOCS(content)
+PARAMETERS('MODEL ALL_MINILM_L12_V2 VECTOR_IDXTYPE HNSW');
+```
+
+Once the index exists, embeddings are computed automatically when rows are inserted -- no external embedding API calls needed.
+
+### Spring AI Integration
+
+Spring AI's `QuestionAnswerAdvisor` only wraps `VectorStore.similaritySearch()` -- pure vector search, nothing else. To use hybrid search, I switched to `RetrievalAugmentationAdvisor`, which is the modular alternative: it accepts a custom `DocumentRetriever`, optional query transformers, and optional post-processors.
+
+The custom `OracleHybridDocumentRetriever` implements `DocumentRetriever` and calls `DBMS_HYBRID_VECTOR.SEARCH` via JDBC, passing a JSON parameter that specifies the hybrid index, the scorer (RRF), and a fuzzy keyword match:
+
+```java
+public List<Document> retrieve(Query query) {
+    String searchJson = """
+        {
+          "hybrid_index_name": "POLICY_HYBRID_IDX",
+          "search_scorer": "rrf",
+          "search_fusion": "UNION",
+          "vector": { "search_text": "%s" },
+          "text": { "contains": "FUZZY(%s, 70, 6)" },
+          "return": { "values": ["chunk_text", "score", "vector_score", "text_score"], "topN": 5 }
+        }
+        """.formatted(query.text(), query.text());
+
+    String resultJson = jdbcTemplate.queryForObject(
+            "SELECT DBMS_HYBRID_VECTOR.SEARCH(JSON(?)) FROM DUAL",
+            String.class, searchJson);
+
+    // parse JSON array → List<Document> with score metadata
+    return parseResults(resultJson);
+}
+```
+
+This bypasses `OracleVectorStore` entirely for retrieval. The `RewriteQueryTransformer` cleans up the user's query before it reaches the retriever, so typos and abbreviations get fixed by the LLM before the search runs.
+
+### Why It Matters
+
+The agent needs accurate retrieval to make good decisions. If the semantic memory returns wrong or low-confidence policy documents, the LLM may hallucinate tool parameters or skip calling a tool it should have used. Hybrid search means higher-confidence context, which means better autonomous decisions -- the agent is less likely to misquote a policy or miss a relevant document when both meaning and exact terms are matched.
 
 ## The Configuration
 
-Configuration lives in a single `application.yaml`. The key design decisions: Hibernate auto-creates the JPA tables (`ddl-auto: update`), Spring AI auto-creates the chat memory and vector store tables (`initialize-schema: true/always`), and Oracle UCP shares one connection pool across all three memory types. No SQL scripts, no Flyway, no custom `@Configuration` classes -- Spring AI's auto-configuration detects the Oracle JDBC driver and wires everything up. See the full [`application.yaml`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/resources/application.yaml) in the repo.
+Configuration lives in a single `application.yaml`. The key design decisions: Hibernate auto-creates the JPA tables (`ddl-auto: update`), Spring AI auto-creates the chat memory table (`initialize-schema: always`), the `POLICY_DOCS` table and hybrid vector index are created by a one-time SQL script (`setup-hybrid-search.sql`), and Oracle UCP shares one connection pool across all three memory types. No Flyway, no custom `@Configuration` classes -- Spring AI's auto-configuration detects the Oracle JDBC driver and wires everything up. See the full [`application.yaml`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/resources/application.yaml) in the repo.
 
 ## The Web UI
 
@@ -245,7 +320,7 @@ It generates a UUID per session for the conversation ID, sends plain text to the
 
 ## Running It Yourself
 
-The short version: start an Oracle DB container, install Ollama and pull two models (`qwen2.5` + `nomic-embed-text`), run the Spring Boot backend with the `local` profile, and optionally start the Streamlit UI. Full setup instructions are in the [repo README](https://github.com/victormartin/oracle-database-java-agent-memory).
+The short version: start an Oracle DB container, load the ONNX model and create the hybrid index (one-time setup), install Ollama and pull the chat model (`qwen2.5`), run the Spring Boot backend with the `local` profile, and optionally start the Streamlit UI. Embeddings are handled in-database by the ONNX model -- no Ollama embedding model needed. Full setup instructions are in the [repo README](https://github.com/victormartin/oracle-database-java-agent-memory).
 
 Quick test with curl:
 
@@ -263,12 +338,12 @@ This is a proof of concept. It demonstrates that you can give an AI agent three 
 What it isn't:
 
 - **Not production-hardened.** There's no authentication, no rate limiting, no streaming responses.
-- **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral. You could swap Oracle for PostgreSQL + pgvector and the controller code wouldn't change. Oracle is what I used because it handles the relational chat history, the vector store, and the order/ticket tables all in one database, and Oracle AI Vector Search works well for this use case.
+- **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral for episodic and procedural memory. The hybrid search retriever is Oracle-specific (it calls `DBMS_HYBRID_VECTOR.SEARCH`), but `RetrievalAugmentationAdvisor` accepts any `DocumentRetriever` implementation, so you could write one for PostgreSQL + pg_trgm or Elasticsearch. Oracle is what I used because it handles the relational chat history, the hybrid vector index, and the order/ticket tables all in one database.
 
-The whole point is that agent memory doesn't have to be complicated. Two advisors, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
+The whole point is that agent memory doesn't have to be complicated. Two advisors, a query transformer, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
 
 ---
 
-**Stack:** Spring Boot 3.5.11 | Spring AI 1.1.2 | Java 21 | Oracle AI Database 26ai | Ollama | Streamlit
+**Stack:** Spring Boot 3.5.11 | Spring AI 1.1.2 | Java 21 | Oracle AI Database 26ai (Hybrid Vector Indexes) | Ollama | Streamlit
 
 **Code:** [github.com/victormartin/oracle-database-java-agent-memory](https://github.com/victormartin/oracle-database-java-agent-memory)

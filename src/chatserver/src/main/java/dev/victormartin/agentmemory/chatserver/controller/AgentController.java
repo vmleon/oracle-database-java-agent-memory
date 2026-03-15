@@ -1,19 +1,18 @@
 package dev.victormartin.agentmemory.chatserver.controller;
 
-import java.util.List;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
+import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import dev.victormartin.agentmemory.chatserver.retriever.OracleHybridDocumentRetriever;
 import dev.victormartin.agentmemory.chatserver.tools.AgentTools;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,17 +30,25 @@ public class AgentController {
     private static final int MAX_KNOWLEDGE_LENGTH = 50_000;
 
     private final ChatClient chatClient;
-    private final VectorStore vectorStore;
+    private final JdbcTemplate jdbcTemplate;
 
     public AgentController(ChatClient.Builder builder,
                            JdbcChatMemoryRepository chatMemoryRepository,
-                           VectorStore vectorStore,
+                           JdbcTemplate jdbcTemplate,
                            AgentTools agentTools) {
-        this.vectorStore = vectorStore;
+        this.jdbcTemplate = jdbcTemplate;
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
                 .chatMemoryRepository(chatMemoryRepository)
                 .maxMessages(100)
+                .build();
+
+        var hybridRetriever = new OracleHybridDocumentRetriever(
+                jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");
+
+        QueryTransformer queryTransformer = RewriteQueryTransformer.builder()
+                .chatClientBuilder(builder.build().mutate())
+                .targetSearchSystem("Oracle hybrid vector search over policy documents")
                 .build();
 
         this.chatClient = builder
@@ -56,11 +63,9 @@ public class AgentController {
                 .defaultTools(agentTools)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
-                        QuestionAnswerAdvisor.builder(vectorStore)
-                                .searchRequest(SearchRequest.builder()
-                                        .topK(5)
-                                        .similarityThreshold(0.7)
-                                        .build())
+                        RetrievalAugmentationAdvisor.builder()
+                                .documentRetriever(hybridRetriever)
+                                .queryTransformers(queryTransformer)
                                 .build()
                 )
                 .build();
@@ -79,15 +84,20 @@ public class AgentController {
                     .body("Message exceeds maximum length of " + MAX_MESSAGE_LENGTH + " characters.");
         }
 
+        log.info("[conv:{}] Incoming: \"{}\"", conversationId,
+                message.length() > 200 ? message.substring(0, 200) + "..." : message);
+
         try {
             String response = chatClient.prompt()
                     .user(message)
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
                     .call()
                     .content();
+            log.info("[conv:{}] Response: 200 OK ({} chars)", conversationId,
+                    response != null ? response.length() : 0);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            log.error("Error processing chat request for conversation {}", conversationId, e);
+            log.error("[conv:{}] Error processing chat request", conversationId, e);
             return ResponseEntity.internalServerError()
                     .body("Unable to process your request. Please try again later.");
         }
@@ -103,10 +113,12 @@ public class AgentController {
         }
 
         try {
-            vectorStore.add(List.of(new Document(content)));
+            jdbcTemplate.update(
+                    "INSERT INTO POLICY_DOCS (id, content) VALUES (sys_guid(), ?)",
+                    content);
             return ResponseEntity.ok("Knowledge added.");
         } catch (Exception e) {
-            log.error("Error adding knowledge to vector store", e);
+            log.error("Error adding knowledge to POLICY_DOCS", e);
             return ResponseEntity.internalServerError()
                     .body("Unable to store knowledge. Please try again later.");
         }

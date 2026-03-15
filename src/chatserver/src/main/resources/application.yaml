@@ -23,15 +23,6 @@ spring:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:
         model: ${OLLAMA_CHAT_MODEL:qwen2.5}
-      embedding:
-        model: ${OLLAMA_EMBEDDING_MODEL:nomic-embed-text}
-
-    vectorstore:
-      oracle:
-        initialize-schema: true
-        distance-type: COSINE
-        dimensions: 768
-        forced-normalization: true
 
     chat:
       memory:

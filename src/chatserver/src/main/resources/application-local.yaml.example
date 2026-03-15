@@ -23,4 +23,5 @@ spring:
 logging:
   level:
     dev.victormartin.agentmemory: DEBUG
-    org.springframework.ai: DEBUG
+    org.springframework.ai.chat.client.advisor: DEBUG
+    org.springframework.ai.rag: DEBUG
