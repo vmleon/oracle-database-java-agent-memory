@@ -13,13 +13,20 @@ import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugment
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import dev.victormartin.agentmemory.chatserver.retriever.OracleHybridDocumentRetriever;
+import dev.victormartin.agentmemory.chatserver.service.ConversationInfo;
+import dev.victormartin.agentmemory.chatserver.service.ConversationService;
+import dev.victormartin.agentmemory.chatserver.service.MessageDto;
 import dev.victormartin.agentmemory.chatserver.tools.AgentTools;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/agent")
@@ -31,12 +38,15 @@ public class AgentController {
 
     private final ChatClient chatClient;
     private final JdbcTemplate jdbcTemplate;
+    private final ConversationService conversationService;
 
     public AgentController(ChatClient.Builder builder,
                            JdbcChatMemoryRepository chatMemoryRepository,
                            JdbcTemplate jdbcTemplate,
-                           AgentTools agentTools) {
+                           AgentTools agentTools,
+                           ConversationService conversationService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.conversationService = conversationService;
 
         ChatMemory chatMemory = MessageWindowChatMemory.builder()
                 .chatMemoryRepository(chatMemoryRepository)
@@ -116,12 +126,27 @@ public class AgentController {
                     .content();
             log.info("[conv:{}] Response: 200 OK ({} chars)", conversationId,
                     response != null ? response.length() : 0);
+            conversationService.generateSummaryIfNeeded(conversationId, message);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("[conv:{}] Error processing chat request", conversationId, e);
             return ResponseEntity.internalServerError()
                     .body("Unable to process your request. Please try again later.");
         }
+    }
+
+    @GetMapping("/conversations")
+    public ResponseEntity<List<ConversationInfo>> listConversations() {
+        return ResponseEntity.ok(conversationService.listConversations());
+    }
+
+    @GetMapping("/conversations/{id}/messages")
+    public ResponseEntity<List<MessageDto>> getMessages(@PathVariable("id") String conversationId) {
+        List<MessageDto> messages = conversationService.getMessages(conversationId);
+        if (messages.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(messages);
     }
 
     @PostMapping("/knowledge")

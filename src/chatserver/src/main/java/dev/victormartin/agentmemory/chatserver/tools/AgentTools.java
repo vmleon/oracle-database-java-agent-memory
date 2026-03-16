@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -24,10 +25,21 @@ public class AgentTools {
 
     private final OrderRepository orderRepository;
     private final SupportTicketRepository supportTicketRepository;
+    private final JdbcTemplate jdbcTemplate;
 
-    public AgentTools(OrderRepository orderRepository, SupportTicketRepository supportTicketRepository) {
+    public AgentTools(OrderRepository orderRepository, SupportTicketRepository supportTicketRepository,
+                      JdbcTemplate jdbcTemplate) {
         this.orderRepository = orderRepository;
         this.supportTicketRepository = supportTicketRepository;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Tool(description = "Get the current date and time from the database. " +
+            "Use this whenever you need to know today's date, for example to check return window eligibility.")
+    public String getCurrentDateTime() {
+        log.info("[PROCEDURAL] fetching current date/time from database");
+        String result = jdbcTemplate.queryForObject("SELECT TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD HH24:MI:SS TZR') FROM DUAL", String.class);
+        return "Current date/time: %s".formatted(result);
     }
 
     @Tool(description = "List all customer orders. Returns a summary of every order including order ID, product, status, and purchase date.")

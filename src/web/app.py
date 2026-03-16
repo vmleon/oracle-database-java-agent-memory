@@ -36,18 +36,53 @@ backend_url = st.sidebar.text_input(
     value=os.getenv("BACKEND_URL", "http://localhost:8080"),
 )
 
-if st.sidebar.button("New Conversation"):
-    st.session_state.conversation_id = str(uuid.uuid4())
-    st.session_state.messages = []
-    st.rerun()
-
 # --- Session state init ---
 if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = str(uuid.uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-st.sidebar.caption(f"Conversation: `{st.session_state.conversation_id[:8]}…`")
+# --- Sidebar: Conversations ---
+st.sidebar.divider()
+if st.sidebar.button("+ New Conversation", use_container_width=True):
+    st.session_state.conversation_id = str(uuid.uuid4())
+    st.session_state.messages = []
+    st.rerun()
+
+try:
+    conv_resp = requests.get(
+        f"{backend_url.rstrip('/')}/api/v1/agent/conversations", timeout=5
+    )
+    if conv_resp.ok:
+        conversations = conv_resp.json()
+        for conv in conversations:
+            conv_id = conv["conversationId"]
+            label = conv.get("summary") or "Untitled"
+            is_active = conv_id == st.session_state.conversation_id
+            btn_label = f"{'> ' if is_active else ''}{label}"
+            if st.sidebar.button(
+                btn_label,
+                key=conv_id,
+                help=conv_id,
+                use_container_width=True,
+                disabled=is_active,
+            ):
+                msg_resp = requests.get(
+                    f"{backend_url.rstrip('/')}/api/v1/agent/conversations/{conv_id}/messages",
+                    timeout=10,
+                )
+                if msg_resp.ok:
+                    st.session_state.conversation_id = conv_id
+                    st.session_state.messages = [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in msg_resp.json()
+                    ]
+                    st.rerun()
+except Exception:
+    pass  # Sidebar degrades gracefully if backend is down
+
+st.sidebar.divider()
+st.sidebar.caption(f"Active: `{st.session_state.conversation_id[:8]}…`")
 
 # --- Welcome message ---
 if not st.session_state.messages:

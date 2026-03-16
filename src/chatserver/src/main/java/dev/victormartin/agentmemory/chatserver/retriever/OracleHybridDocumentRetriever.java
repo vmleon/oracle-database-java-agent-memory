@@ -121,9 +121,9 @@ public class OracleHybridDocumentRetriever implements DocumentRetriever {
     }
 
     private String escapeOracleText(String text) {
-        // Strip Oracle Text special characters, quotes, and newlines
-        return text.replace("\\n", " ")
-                   .replaceAll("[{}()\\[\\]&|!>~:;,$%\\-'\"?\n\r]", " ")
+        // Keep only alphanumeric characters and spaces — safer than blacklisting
+        // Oracle Text special chars individually
+        return text.replaceAll("[^a-zA-Z0-9\\s]", " ")
                    .replaceAll("\\s+", " ")
                    .trim();
     }

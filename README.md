@@ -136,6 +136,12 @@ Pull the chat model:
 ollama pull qwen2.5          # chat model with tool calling support
 ```
 
+> From cURL:
+>
+> ```bash
+> curl -s http://localhost:11434/api/pull -d '{"model": "qwen2.5"}'
+> ```
+
 Embeddings are computed in-database by the ONNX model loaded in step 3 — no Ollama embedding model needed.
 
 ### 5. Set up the local profile
@@ -195,14 +201,6 @@ curl -X POST http://localhost:8080/api/v1/agent/chat \
   -d "I want to return order ORD-1001, the product was defective."
 ```
 
-Add custom knowledge (for RAG retrieval):
-
-```bash
-curl -X POST http://localhost:8080/api/v1/agent/knowledge \
-  -H "Content-Type: text/plain" \
-  -d "Oracle AI Database 26ai supports native VECTOR data type for AI workloads."
-```
-
 ## API Reference
 
 ### POST /api/v1/agent/chat
@@ -250,9 +248,9 @@ Spring AI's abstraction layer makes switching the chat model provider a dependen
 | Ollama (local) | `spring-ai-starter-model-ollama`       | `spring.ai.ollama`       |
 | OpenAI         | `spring-ai-starter-model-openai`       | `spring.ai.openai`       |
 | Anthropic      | `spring-ai-starter-model-anthropic`    | `spring.ai.anthropic`    |
+| OCI GenAI      | `spring-ai-starter-model-oci-genai`    | `spring.ai.oci.genai`    |
 | GCP Vertex AI  | `spring-ai-starter-model-vertex-ai`    | `spring.ai.vertex.ai`    |
 | Azure OpenAI   | `spring-ai-starter-model-azure-openai` | `spring.ai.azure.openai` |
-| OCI GenAI      | `spring-ai-starter-model-oci-genai`    | `spring.ai.oci.genai`    |
 
 Only `build.gradle` dependency and `application.yaml` config need to change. Embeddings are handled in-database by the ONNX model and are not affected by the chat provider choice.
 
