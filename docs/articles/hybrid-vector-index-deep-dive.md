@@ -47,12 +47,12 @@ When you search, the query text is embedded using the same ONNX model, then the 
 
 This is a classic full-text search index. Oracle Text creates several internal structures (the "dollar tables") in the user's schema:
 
-| Internal Table | Purpose |
-|---|---|
-| `DR$<index_name>$I` | **Main inverted index** —maps each token (word) to a posting list: which documents contain it, at what positions, with what frequency |
-| `DR$<index_name>$K` | **Key mapping** —maps Oracle Text internal doc IDs to the base table's ROWID |
-| `DR$<index_name>$R` | **Reverse mapping** —ROWID to internal doc ID (inverse of $K) |
-| `DR$<index_name>$N` | **Negative list / pending queue** —tracks deleted or updated rows pending index synchronization |
+| Internal Table                                | Purpose                                                                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `DR$<index_name>$I` (DR = Document Retrieval) | **Main inverted index** —maps each token (word) to a posting list: which documents contain it, at what positions, with what frequency |
+| `DR$<index_name>$K`                           | **Key mapping** —maps Oracle Text internal doc IDs to the base table's ROWID                                                          |
+| `DR$<index_name>$R`                           | **Reverse mapping** —ROWID to internal doc ID (inverse of $K)                                                                         |
+| `DR$<index_name>$N`                           | **Negative list / pending queue** —tracks deleted or updated rows pending index synchronization                                       |
 
 Oracle Text also creates internal sequences, procedures, and triggers for index maintenance and DML tracking.
 
@@ -107,7 +107,7 @@ When the Spring Boot `DataSeeder` inserts a policy document:
 INSERT INTO POLICY_DOCS (id, content) VALUES (sys_guid(), ?)
 ```
 
-The hybrid index intercepts the DML through `CTXSYS.TEXTINDEXMETHODS` (the domain index implementation). Both paths run within the same transaction:
+The hybrid index intercepts the DML through `CTXSYS.TEXTINDEXMETHODS` (CTXSYS = ConText System, the domain index implementation). Both paths run within the same transaction:
 
 **1. The row is inserted into `POLICY_DOCS`**
 
@@ -145,15 +145,15 @@ After lexing, the meaningful tokens are something like: `item`, `return`, `30`, 
 
 This is the core search structure. Each token maps to a posting list: which documents contain it, at what positions, and how many times.
 
-| Token | Doc ID | Positions | Frequency |
-|---|---|---|---|
-| `return` | 42 | 4, 8 | 2 |
-| `policy` | 42 | 9 | 1 |
-| `item` | 42 | 1 | 1 |
-| `product` | 42 | 11 | 1 |
-| `30` | 42 | 5 | 1 |
-| `day` | 42 | 6 | 1 |
-| `cover` | 42 | 10 | 1 |
+| Token     | Doc ID | Positions | Frequency |
+| --------- | ------ | --------- | --------- |
+| `return`  | 42     | 4, 8      | 2         |
+| `policy`  | 42     | 9         | 1         |
+| `item`    | 42     | 1         | 1         |
+| `product` | 42     | 11        | 1         |
+| `30`      | 42     | 5         | 1         |
+| `day`     | 42     | 6         | 1         |
+| `cover`   | 42     | 10        | 1         |
 
 When a keyword search for "return policy" runs, Oracle Text looks up both tokens in `$I`, finds that document 42 appears in both posting lists, and scores it accordingly (BM25 or similar relevance ranking). Position data also enables phrase matching — Oracle can verify that `return` at position 8 and `policy` at position 9 are adjacent.
 
@@ -161,9 +161,9 @@ When a keyword search for "return policy" runs, Oracle Text looks up both tokens
 
 Oracle Text assigns its own sequential integer IDs to documents. `$K` maps these internal IDs back to the base table's physical ROWID:
 
-| Doc ID | ROWID |
-|---|---|
-| 42 | `AAASxQAALAAA1RAAAB` |
+| Doc ID | ROWID                |
+| ------ | -------------------- |
+| 42     | `AAASxQAALAAA1RAAAB` |
 
 This lets Oracle Text translate its internal results back to actual rows in `POLICY_DOCS`.
 
@@ -210,13 +210,13 @@ Setting up the hybrid index requires two levels of database access:
 
 ### As sysdba (`setup-db.sql`)
 
-| Grant | Why |
-|---|---|
-| `RESOURCE` role | Bundles CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER, CREATE TYPE, CREATE INDEXTYPE. Oracle Text needs all of these to build the internal `DR$` structures in the user's schema. |
-| `CTXAPP` role | Grants EXECUTE on Oracle Text packages (`CTX_DDL`, `CTX_QUERY`, etc.). Without this, the user can't interact with Oracle Text APIs. |
-| `CREATE MINING MODEL` | Required by `DBMS_VECTOR.LOAD_ONNX_MODEL` to register the ONNX model as a mining model object. |
-| `UNLIMITED TABLESPACE` | The internal tables and indexes consume tablespace; without this, quota limits can block index creation. |
-| `CREATE DIRECTORY` + `GRANT READ, WRITE` | Creates a logical pointer to the filesystem path where the ONNX file lives inside the container. This is a sysdba-only operation. |
+| Grant                                    | Why                                                                                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESOURCE` role                          | Bundles CREATE TABLE, CREATE SEQUENCE, CREATE PROCEDURE, CREATE TRIGGER, CREATE TYPE, CREATE INDEXTYPE. Oracle Text needs all of these to build the internal `DR$` structures in the user's schema. |
+| `CTXAPP` role                            | Grants EXECUTE on Oracle Text packages (`CTX_DDL`, `CTX_QUERY`, etc.). Without this, the user can't interact with Oracle Text APIs.                                                                 |
+| `CREATE MINING MODEL`                    | Required by `DBMS_VECTOR.LOAD_ONNX_MODEL` to register the ONNX model as a mining model object.                                                                                                      |
+| `UNLIMITED TABLESPACE`                   | The internal tables and indexes consume tablespace; without this, quota limits can block index creation.                                                                                            |
+| `CREATE DIRECTORY` + `GRANT READ, WRITE` | Creates a logical pointer to the filesystem path where the ONNX file lives inside the container. This is a sysdba-only operation.                                                                   |
 
 ### As pdbadmin (`setup-hybrid-search.sql`)
 
