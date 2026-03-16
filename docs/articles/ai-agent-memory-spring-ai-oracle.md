@@ -79,14 +79,7 @@ Procedural memory is implemented as `@Tool`-annotated methods in a Spring compon
         "Returns the current status including shipping information.")
 public String lookupOrderStatus(
         @ToolParam(description = "The order ID to look up, e.g. ORD-1001") String orderId) {
-    Optional<CustomerOrder> opt = orderRepository.findByOrderId(orderId);
-    if (opt.isEmpty()) {
-        return "Order %s not found.".formatted(orderId);
-    }
-    CustomerOrder o = opt.get();
-    return "Order %s: %s | Qty: %d | $%s | Status: %s | Purchased: %s | Ship to: %s"
-            .formatted(o.getOrderId(), o.getProductName(), o.getQuantity(),
-                    o.getTotalAmount(), o.getStatus(), o.getPurchaseDate(), o.getShippingAddress());
+    // Fetches order from DB via JPA, returns formatted status string
 }
 
 @Tool(description = "Initiate a product return for a given order. " +
@@ -95,27 +88,7 @@ public String lookupOrderStatus(
 public String initiateReturn(
         @ToolParam(description = "The order ID to return") String orderId,
         @ToolParam(description = "The reason for the return") String reason) {
-    Optional<CustomerOrder> opt = orderRepository.findByOrderId(orderId);
-    if (opt.isEmpty()) {
-        return "Order %s not found. Cannot initiate return.".formatted(orderId);
-    }
-    CustomerOrder order = opt.get();
-
-    if (order.getStatus() != OrderStatus.DELIVERED) {
-        return "Order %s cannot be returned. Current status is %s — only DELIVERED orders are eligible."
-                .formatted(orderId, order.getStatus());
-    }
-
-    long daysSincePurchase = ChronoUnit.DAYS.between(order.getPurchaseDate(), LocalDate.now());
-    if (daysSincePurchase > RETURN_WINDOW_DAYS) {
-        return "Order %s cannot be returned. Purchased %d days ago, exceeds the %d-day window."
-                .formatted(orderId, daysSincePurchase, RETURN_WINDOW_DAYS);
-    }
-
-    order.setStatus(OrderStatus.PREPARING_RETURN);
-    orderRepository.save(order);
-    return "Return initiated for order %s (%s). Reason: %s. Status changed to PREPARING_RETURN."
-            .formatted(orderId, order.getProductName(), reason);
+    // Validates order exists, checks DELIVERED status and 30-day window, updates status via JPA
 }
 ```
 
@@ -132,81 +105,27 @@ The controller wires everything together —two advisors, five tools, one `ChatC
 @RequestMapping("/api/v1/agent")
 public class AgentController {
 
-    private final ChatClient chatClient;
-    private final JdbcTemplate jdbcTemplate;
-
     public AgentController(ChatClient.Builder builder,
                            JdbcChatMemoryRepository chatMemoryRepository,
                            JdbcTemplate jdbcTemplate,
                            AgentTools agentTools) {
-        this.jdbcTemplate = jdbcTemplate;
-
-        ChatMemory chatMemory = MessageWindowChatMemory.builder()
-                .chatMemoryRepository(chatMemoryRepository)
-                .maxMessages(100)
-                .build();
-
-        var hybridRetriever = new OracleHybridDocumentRetriever(
-                jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");
-
-        this.chatClient = builder
-                .defaultSystem("""
-                        You are ShopAssist, a customer support AI agent.
-
-                        You have TOOLS for performing actions — always use them when the user \
-                        asks to do something:
-                        - listOrders: Lists ALL orders. No parameters needed.
-                        - lookupOrderStatus: Checks status of a specific order by its ID.
-                        - initiateReturn: Starts a return. Needs order ID and reason.
-                        - escalateToSupport: Creates a support ticket.
-                        - listSupportTickets: Lists all support tickets.
-
-                        You also have a KNOWLEDGE BASE with store policies. ...
-
-                        IMPORTANT RULES:
-                        - When the user asks to perform an action, ALWAYS call the tool immediately.
-                        - Only use knowledge context for policy questions, not for actions.
-                        - Be concise and direct.""")
-                .defaultTools(agentTools)
-                .defaultAdvisors(
-                        MessageChatMemoryAdvisor.builder(chatMemory).build(),
-                        RetrievalAugmentationAdvisor.builder()
-                                .documentRetriever(hybridRetriever)
-                                .queryAugmenter(ContextualQueryAugmenter.builder()
-                                        .allowEmptyContext(true)
-                                        .promptTemplate(new PromptTemplate("""
-                                                The following store policy documents may be relevant:
-                                                ---------------------
-                                                {context}
-                                                ---------------------
-                                                Use these ONLY to answer questions about store policies.
-                                                For action requests, use your tools.
-                                                For conversational questions, use the conversation history.
-                                                {query}"""))
-                                        .build())
-                                .build()
-                )
-                .build();
+        // Builds a ChatClient with:
+        //   - MessageChatMemoryAdvisor (episodic: last 100 messages per conversation)
+        //   - RetrievalAugmentationAdvisor + OracleHybridDocumentRetriever (semantic: hybrid search)
+        //   - AgentTools via .defaultTools() (procedural: 5 @Tool methods)
+        //   - System prompt defining the agent persona and tool usage rules
     }
 
     @PostMapping("/chat")
     public ResponseEntity<String> chat(
             @RequestBody String message,
             @RequestHeader("X-Conversation-Id") String conversationId) {
-        String response = chatClient.prompt()
-                .user(message)
-                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId))
-                .call()
-                .content();
-        return ResponseEntity.ok(response);
+        // Sends message to ChatClient with conversation ID, returns LLM response
     }
 
     @PostMapping("/knowledge")
     public ResponseEntity<String> addKnowledge(@RequestBody String content) {
-        jdbcTemplate.update(
-                "INSERT INTO POLICY_DOCS (id, content) VALUES (sys_guid(), ?)",
-                content);
-        return ResponseEntity.ok("Knowledge added.");
+        // Inserts text into POLICY_DOCS table via JDBC (hybrid index handles embedding)
     }
 }
 ```
@@ -301,23 +220,8 @@ The custom `OracleHybridDocumentRetriever` implements `DocumentRetriever` and ca
 
 ```java
 public List<Document> retrieve(Query query) {
-    String searchJson = """
-        {
-          "hybrid_index_name": "POLICY_HYBRID_IDX",
-          "search_scorer": "rrf",
-          "search_fusion": "UNION",
-          "vector": { "search_text": "%s" },
-          "text": { "contains": "%s" },
-          "return": { "values": ["chunk_text", "score", "vector_score", "text_score"], "topN": 5 }
-        }
-        """.formatted(escapeJson(query.text()), buildContainsClause(query.text()));
-
-    String resultJson = jdbcTemplate.queryForObject(
-            "SELECT DBMS_HYBRID_VECTOR.SEARCH(JSON(?)) FROM DUAL",
-            String.class, searchJson);
-
-    // parse JSON array → List<Document> with score metadata
-    return parseResults(resultJson);
+    // Builds a JSON spec with hybrid index name, RRF scorer, vector + text search clauses
+    // Calls DBMS_HYBRID_VECTOR.SEARCH via JDBC, parses JSON results into List<Document>
 }
 ```
 
@@ -337,25 +241,8 @@ The Streamlit frontend sends messages to the backend and renders responses. Here
 
 ```python
 def send_message(prompt, url):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            resp = requests.post(
-                f"{url.rstrip('/')}/api/v1/agent/chat",
-                data=prompt,
-                headers={
-                    "Content-Type": "text/plain",
-                    "X-Conversation-Id": st.session_state.conversation_id,
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            answer = resp.text
-        st.markdown(answer)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    # POSTs plain text to /api/v1/agent/chat with X-Conversation-Id header
+    # Renders user message and assistant response in Streamlit chat UI
 
 if prompt := st.chat_input("Type a message..."):
     send_message(prompt, backend_url)
