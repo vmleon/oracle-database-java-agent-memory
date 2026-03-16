@@ -1,6 +1,6 @@
 # Oracle Hybrid Vector Index: Why and How It Works
 
-Pure vector search has a blind spot. It's great at understanding meaning -- "defective product" matches "broken item" even though they share no words -- but it can miss exact keywords that matter. Ask "what's the policy for order ORD-1001?" and vector search might rank a document about "order processing guidelines" higher than one that literally contains "ORD-1001". The embedding model captures the _concept_ of orders but loses the specific identifier.
+Pure vector search has a blind spot. It's great at understanding meaning —"defective product" matches "broken item" even though they share no words —but it can miss exact keywords that matter. Ask "what's the policy for order ORD-1001?" and vector search might rank a document about "order processing guidelines" higher than one that literally contains "ORD-1001". The embedding model captures the _concept_ of orders but loses the specific identifier.
 
 Pure keyword search has the opposite problem. It finds "ORD-1001" instantly, but ask "how do I send back a damaged item?" and it won't match a document titled "Return Policy" because the words don't overlap.
 
@@ -10,8 +10,8 @@ Neither approach alone is good enough for a RAG pipeline that needs to handle bo
 
 A hybrid vector index is a single Oracle domain index that internally creates and manages **two sub-indexes**:
 
-1. **An HNSW vector index** -- for semantic similarity search
-2. **An Oracle Text inverted index** -- for keyword and fuzzy search
+1. **An HNSW vector index** —for semantic similarity search
+2. **An Oracle Text inverted index** —for keyword and fuzzy search
 
 One DDL statement creates both:
 
@@ -21,7 +21,7 @@ ON POLICY_DOCS(content)
 PARAMETERS('MODEL ALL_MINILM_L12_V2 VECTOR_IDXTYPE HNSW');
 ```
 
-The key detail: the base table (`POLICY_DOCS`) has no vector column. The index computes embeddings automatically using the bound ONNX model and stores them inside its own structures. From the application's perspective, you insert plain text and search with plain text -- the database handles embedding, indexing, and fusion internally.
+The key detail: the base table (`POLICY_DOCS`) has no vector column. The index computes embeddings automatically using the bound ONNX model and stores them inside its own structures. From the application's perspective, you insert plain text and search with plain text —the database handles embedding, indexing, and fusion internally.
 
 ## The Two Sub-Indexes
 
@@ -49,10 +49,10 @@ This is a classic full-text search index. Oracle Text creates several internal s
 
 | Internal Table | Purpose |
 |---|---|
-| `DR$<index_name>$I` | **Main inverted index** -- maps each token (word) to a posting list: which documents contain it, at what positions, with what frequency |
-| `DR$<index_name>$K` | **Key mapping** -- maps Oracle Text internal doc IDs to the base table's ROWID |
-| `DR$<index_name>$R` | **Reverse mapping** -- ROWID to internal doc ID (inverse of $K) |
-| `DR$<index_name>$N` | **Negative list / pending queue** -- tracks deleted or updated rows pending index synchronization |
+| `DR$<index_name>$I` | **Main inverted index** —maps each token (word) to a posting list: which documents contain it, at what positions, with what frequency |
+| `DR$<index_name>$K` | **Key mapping** —maps Oracle Text internal doc IDs to the base table's ROWID |
+| `DR$<index_name>$R` | **Reverse mapping** —ROWID to internal doc ID (inverse of $K) |
+| `DR$<index_name>$N` | **Negative list / pending queue** —tracks deleted or updated rows pending index synchronization |
 
 Oracle Text also creates internal sequences, procedures, and triggers for index maintenance and DML tracking.
 
@@ -135,10 +135,10 @@ SELECT VECTOR_EMBEDDING(ALL_MINILM_L12_V2 USING 'hello world' AS data) FROM DUAL
 
 This means:
 
-- **No external API calls** for embeddings -- no Ollama embedding model, no network latency
+- **No external API calls** for embeddings —no Ollama embedding model, no network latency
 - **Embeddings are computed at INSERT time** automatically by the hybrid index
 - **Query embeddings are computed at SEARCH time** automatically by `DBMS_HYBRID_VECTOR.SEARCH`
-- The Java application never touches embeddings directly -- it sends plain text in and gets documents back
+- The Java application never touches embeddings directly —it sends plain text in and gets documents back
 
 ## Database Privileges: What and Why
 
