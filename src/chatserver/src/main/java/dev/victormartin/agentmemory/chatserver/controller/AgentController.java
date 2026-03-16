@@ -7,9 +7,9 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository;
+import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
-import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
-import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
+import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugmenter;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import dev.victormartin.agentmemory.chatserver.retriever.OracleHybridDocumentRetriever;
@@ -46,26 +46,47 @@ public class AgentController {
         var hybridRetriever = new OracleHybridDocumentRetriever(
                 jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");
 
-        QueryTransformer queryTransformer = RewriteQueryTransformer.builder()
-                .chatClientBuilder(builder.build().mutate())
-                .targetSearchSystem("Oracle hybrid vector search over policy documents")
-                .build();
-
         this.chatClient = builder
                 .defaultSystem("""
-                        You are a helpful AI assistant with access to a knowledge base \
-                        and a set of tools for performing tasks. \
-                        When answering questions, use any relevant context provided to you. \
-                        When a user asks you to perform an action (like looking up an order, \
-                        initiating a return, or escalating to support), use the appropriate tool. \
-                        If you don't know the answer, say so honestly. \
-                        Be concise and direct in your responses.""")
+                        You are ShopAssist, a customer support AI agent.
+
+                        You have TOOLS for performing actions — always use them when the user asks to do something:
+                        - listOrders: Lists ALL orders. No parameters needed. Call it directly when asked about orders.
+                        - lookupOrderStatus: Checks status of a specific order by its ID (e.g. ORD-1001).
+                        - initiateReturn: Starts a return for a delivered order. Needs order ID and reason.
+                        - escalateToSupport: Creates a support ticket. Needs issue description, priority, and optional order ID.
+                        - listSupportTickets: Lists all support tickets. No parameters needed.
+
+                        You also have a KNOWLEDGE BASE with store policies (returns, shipping, support, etc.). \
+                        When policy context is provided, use it to answer policy questions.
+
+                        IMPORTANT RULES:
+                        - When the user asks to perform an action, ALWAYS call the appropriate tool immediately. \
+                        Do NOT ask for information the tool does not require.
+                        - listOrders takes NO parameters — never ask for a customer ID or email, just call it.
+                        - Only use knowledge context for policy or informational questions, not for actions.
+                        - Be concise and direct. If you don't know something, say so.""")
                 .defaultTools(agentTools)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
                         RetrievalAugmentationAdvisor.builder()
                                 .documentRetriever(hybridRetriever)
-                                .queryTransformers(queryTransformer)
+                                .queryAugmenter(ContextualQueryAugmenter.builder()
+                                        .allowEmptyContext(true)
+                                        .promptTemplate(new PromptTemplate("""
+                                                The following store policy documents may be relevant:
+
+                                                ---------------------
+                                                {context}
+                                                ---------------------
+
+                                                Use these ONLY to answer questions about store policies \
+                                                (returns, shipping, support, warranties, etc.).
+                                                For action requests, use your tools. \
+                                                For conversational questions, use the conversation history.
+
+                                                {query}"""))
+                                        .build())
                                 .build()
                 )
                 .build();

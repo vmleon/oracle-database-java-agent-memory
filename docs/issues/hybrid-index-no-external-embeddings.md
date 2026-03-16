@@ -28,7 +28,7 @@ At both ingestion and query time, the index uses this in-database model to compu
 
 ## Impact on This Project
 
-The current setup uses **nomic-embed-text (768-dim) via Ollama** for embeddings. Migrating to hybrid search forces a switch to an in-database ONNX model, which limits options to:
+The previous setup used **nomic-embed-text (768-dim) via Ollama** for embeddings. Migrating to hybrid search forced a switch to an in-database ONNX model, which limited options to:
 
 | Option | Model | Dimensions | Setup Complexity |
 |--------|-------|------------|-----------------|

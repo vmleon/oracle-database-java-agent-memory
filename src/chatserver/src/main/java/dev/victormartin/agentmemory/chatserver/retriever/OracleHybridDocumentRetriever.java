@@ -82,6 +82,7 @@ public class OracleHybridDocumentRetriever implements DocumentRetriever {
 
     private String buildSearchJson(String queryText) {
         String escaped = escapeJson(queryText);
+        String containsClause = buildContainsClause(queryText);
         return """
             {
               "hybrid_index_name": "%s",
@@ -91,19 +92,39 @@ public class OracleHybridDocumentRetriever implements DocumentRetriever {
                 "search_text": "%s"
               },
               "text": {
-                "contains": "FUZZY(%s, 70, 6)"
+                "contains": "%s"
               },
               "return": {
                 "values": ["chunk_text", "score", "vector_score", "text_score"],
                 "topN": %d
               }
             }
-            """.formatted(indexName, scorer, escaped, escaped, topK);
+            """.formatted(indexName, scorer, escaped, containsClause, topK);
+    }
+
+    private String buildContainsClause(String queryText) {
+        String cleaned = escapeOracleText(queryText);
+        String[] words = cleaned.split("\\s+");
+        var terms = java.util.Arrays.stream(words)
+                .filter(w -> !w.isBlank() && w.length() > 2)
+                .toList();
+        if (terms.isEmpty()) {
+            return cleaned.isBlank() ? "dummy" : cleaned;
+        }
+        return String.join(" OR ", terms);
     }
 
     private String escapeJson(String text) {
         return text.replace("\\", "\\\\")
                    .replace("\"", "\\\"")
                    .replace("\n", "\\n");
+    }
+
+    private String escapeOracleText(String text) {
+        // Strip Oracle Text special characters, quotes, and newlines
+        return text.replace("\\n", " ")
+                   .replaceAll("[{}()\\[\\]&|!>~:;,$%\\-'\"?\n\r]", " ")
+                   .replaceAll("\\s+", " ")
+                   .trim();
     }
 }

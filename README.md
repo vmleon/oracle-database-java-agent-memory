@@ -1,6 +1,6 @@
 # Oracle Database for Java Agent Memory with Spring AI
 
-POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle Hybrid Vector Search — vector similarity + keyword/fuzzy search fused with Reciprocal Rank Fusion), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Embeddings are computed in-database using a loaded ONNX model. Demo data (8 orders + 12 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
+POC demonstrating AI agent memory using Spring AI with Oracle AI Database 26ai. The agent has three memory layers: episodic memory (chat history persisted via JDBC), semantic memory (domain knowledge retrieved via Oracle Hybrid Vector Search — vector similarity + keyword search fused with Reciprocal Rank Fusion), and procedural memory (DB-backed `@Tool`-annotated methods the LLM can call to perform actions). Embeddings are computed in-database using a loaded ONNX model. Demo data (8 orders + 12 policy documents) is auto-seeded on startup for a complete end-to-end demo flow.
 
 ## Architecture
 
@@ -46,19 +46,18 @@ graph TD
 graph TD
     A[User Message] --> B["POST /api/v1/agent/chat"]
     B --> C["1. Episodic Memory<br/>MessageChatMemoryAdvisor<br/>loads last 100 messages"]
-    C --> D["2. Query Rewriting<br/>RewriteQueryTransformer<br/>LLM cleans typos & abbreviations"]
-    D --> E["3. Hybrid Vector Search<br/>OracleHybridDocumentRetriever"]
-    E --> F["Vector Similarity<br/>(ONNX in-DB)"]
-    E --> G["Keyword + Fuzzy<br/>(Oracle Text)"]
-    F --> H["RRF Fusion → top-5"]
-    G --> H
-    H --> I["4. LLM Call<br/>Ollama qwen2.5"]
-    C -.->|chat history| I
-    I --> J{Tool call?}
-    J -->|yes| K["5. Procedural Memory<br/>@Tool method"]
-    K -.->|tool result| I
-    J -->|no| L["6. Save Exchange"]
-    L --> M[Response]
+    C --> D["2. Hybrid Vector Search<br/>OracleHybridDocumentRetriever"]
+    D --> E["Vector Similarity<br/>(ONNX in-DB)"]
+    D --> F["Keyword Search<br/>(Oracle Text)"]
+    E --> G["RRF Fusion → top-5"]
+    F --> G
+    G --> H["3. LLM Call<br/>Ollama qwen2.5"]
+    C -.->|chat history| H
+    H --> I{Tool call?}
+    I -->|yes| J["4. Procedural Memory<br/>@Tool method"]
+    J -.->|tool result| H
+    I -->|no| K["5. Save Exchange"]
+    K --> L[Response]
 ```
 
 ## Prerequisites
@@ -109,7 +108,7 @@ podman cp all_MiniLM_L12_v2.onnx oradb:/opt/oracle/dumps/
 podman exec -i oradb sqlplus pdbadmin/Oracle123@freepdb1 < setup-hybrid-search.sql
 ```
 
-This loads the ONNX model into the database, creates the `POLICY_DOCS` table, and creates a hybrid vector index that combines vector similarity search with Oracle Text keyword/fuzzy search.
+This loads the ONNX model into the database, creates the `POLICY_DOCS` table, and creates a hybrid vector index that combines vector similarity search with Oracle Text keyword search.
 
 ### 4. Install Ollama, start the server, and pull the chat model
 

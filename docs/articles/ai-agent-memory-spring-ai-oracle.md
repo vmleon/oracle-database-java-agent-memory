@@ -149,21 +149,41 @@ public class AgentController {
         var hybridRetriever = new OracleHybridDocumentRetriever(
                 jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");
 
-        QueryTransformer queryTransformer = RewriteQueryTransformer.builder()
-                .chatClientBuilder(builder.build().mutate())
-                .targetSearchSystem("Oracle hybrid vector search over policy documents")
-                .build();
-
         this.chatClient = builder
                 .defaultSystem("""
-                        You are a helpful AI assistant with access to a knowledge base \
-                        and a set of tools for performing tasks. ...""")
+                        You are ShopAssist, a customer support AI agent.
+
+                        You have TOOLS for performing actions — always use them when the user \
+                        asks to do something:
+                        - listOrders: Lists ALL orders. No parameters needed.
+                        - lookupOrderStatus: Checks status of a specific order by its ID.
+                        - initiateReturn: Starts a return. Needs order ID and reason.
+                        - escalateToSupport: Creates a support ticket.
+                        - listSupportTickets: Lists all support tickets.
+
+                        You also have a KNOWLEDGE BASE with store policies. ...
+
+                        IMPORTANT RULES:
+                        - When the user asks to perform an action, ALWAYS call the tool immediately.
+                        - Only use knowledge context for policy questions, not for actions.
+                        - Be concise and direct.""")
                 .defaultTools(agentTools)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
                         RetrievalAugmentationAdvisor.builder()
                                 .documentRetriever(hybridRetriever)
-                                .queryTransformers(queryTransformer)
+                                .queryAugmenter(ContextualQueryAugmenter.builder()
+                                        .allowEmptyContext(true)
+                                        .promptTemplate(new PromptTemplate("""
+                                                The following store policy documents may be relevant:
+                                                ---------------------
+                                                {context}
+                                                ---------------------
+                                                Use these ONLY to answer questions about store policies.
+                                                For action requests, use your tools.
+                                                For conversational questions, use the conversation history.
+                                                {query}"""))
+                                        .build())
                                 .build()
                 )
                 .build();
@@ -191,7 +211,7 @@ public class AgentController {
 }
 ```
 
-Two endpoints, two advisors, a query transformer, five tools, one `ChatClient`. Let's break down the three memory types.
+Two endpoints, two advisors, five tools, one `ChatClient`. Let's break down the three memory types.
 
 ### Episodic Memory (Advisors)
 
@@ -201,9 +221,9 @@ Spring AI's advisor pattern is where the magic lives. Advisors intercept every c
 
 ### Semantic Memory (RAG)
 
-**`RetrievalAugmentationAdvisor`** handles semantic memory. Before each LLM call, the user's question first passes through a `RewriteQueryTransformer` that uses the LLM to clean up typos and abbreviations (so "retrun polcy" becomes a proper search query). Then a custom `OracleHybridDocumentRetriever` calls `DBMS_HYBRID_VECTOR.SEARCH`, which runs vector similarity search and Oracle Text keyword/fuzzy search in parallel and fuses the results with Reciprocal Rank Fusion (RRF). The top 5 matching documents get injected into the prompt as context.
+**`RetrievalAugmentationAdvisor`** handles semantic memory. Before each LLM call, a custom `OracleHybridDocumentRetriever` calls `DBMS_HYBRID_VECTOR.SEARCH`, which runs vector similarity search and Oracle Text keyword search in parallel and fuses the results with Reciprocal Rank Fusion (RRF). The top 5 matching documents get injected into the prompt as context via a custom `ContextualQueryAugmenter` that treats the documents as supplementary -- the LLM is told to use them only for policy questions, not for action requests or conversational context. This prevents the RAG context from overriding chat history or suppressing tool calls.
 
-Why hybrid instead of pure vector search? Dense embeddings capture meaning -- a query about "return policy" will match documents about refunds and exchanges even if those exact words don't appear. But they're weak on exact terms: a query for "ORD-1001" or a misspelled "retrun polcy" degrades because the embedding model encodes semantics, not keywords. Hybrid search covers both: the vector side handles meaning, the keyword side handles exact matches and fuzzy terms, and RRF merges the two result lists by rank position rather than trying to normalize incompatible scores.
+Why hybrid instead of pure vector search? Dense embeddings capture meaning -- a query about "return policy" will match documents about refunds and exchanges even if those exact words don't appear. But they're weak on exact terms: a query for "ORD-1001" degrades because the embedding model encodes semantics, not keywords. Hybrid search covers both: the vector side handles meaning, the keyword side handles exact matches, and RRF merges the two result lists by rank position rather than trying to normalize incompatible scores.
 
 ### Procedural Memory (Tools)
 
@@ -224,8 +244,6 @@ sequenceDiagram
     Episodic->>DB: load last 100 messages
     DB-->>Episodic: chat history
     Episodic->>Semantic: prompt + history
-    Semantic->>LLM: rewrite query
-    LLM-->>Semantic: cleaned query
     Semantic->>DB: DBMS_HYBRID_VECTOR.SEARCH
     DB-->>Semantic: top 5 docs (RRF-ranked)
     Semantic->>LLM: prompt + history + docs + tool descriptions
@@ -277,9 +295,9 @@ Once the index exists, embeddings are computed automatically when rows are inser
 
 ### Spring AI Integration
 
-Spring AI's `QuestionAnswerAdvisor` only wraps `VectorStore.similaritySearch()` -- pure vector search, nothing else. To use hybrid search, I switched to `RetrievalAugmentationAdvisor`, which is the modular alternative: it accepts a custom `DocumentRetriever`, optional query transformers, and optional post-processors.
+Spring AI's `QuestionAnswerAdvisor` only wraps `VectorStore.similaritySearch()` -- pure vector search, nothing else. To use hybrid search, I switched to `RetrievalAugmentationAdvisor`, which is the modular alternative: it accepts a custom `DocumentRetriever` and a custom `QueryAugmenter` to control how retrieved documents are injected into the prompt.
 
-The custom `OracleHybridDocumentRetriever` implements `DocumentRetriever` and calls `DBMS_HYBRID_VECTOR.SEARCH` via JDBC, passing a JSON parameter that specifies the hybrid index, the scorer (RRF), and a fuzzy keyword match:
+The custom `OracleHybridDocumentRetriever` implements `DocumentRetriever` and calls `DBMS_HYBRID_VECTOR.SEARCH` via JDBC, passing a JSON parameter that specifies the hybrid index, the scorer (RRF), and a keyword match:
 
 ```java
 public List<Document> retrieve(Query query) {
@@ -289,10 +307,10 @@ public List<Document> retrieve(Query query) {
           "search_scorer": "rrf",
           "search_fusion": "UNION",
           "vector": { "search_text": "%s" },
-          "text": { "contains": "FUZZY(%s, 70, 6)" },
+          "text": { "contains": "%s" },
           "return": { "values": ["chunk_text", "score", "vector_score", "text_score"], "topN": 5 }
         }
-        """.formatted(query.text(), query.text());
+        """.formatted(escapeJson(query.text()), buildContainsClause(query.text()));
 
     String resultJson = jdbcTemplate.queryForObject(
             "SELECT DBMS_HYBRID_VECTOR.SEARCH(JSON(?)) FROM DUAL",
@@ -303,7 +321,7 @@ public List<Document> retrieve(Query query) {
 }
 ```
 
-This bypasses `OracleVectorStore` entirely for retrieval. The `RewriteQueryTransformer` cleans up the user's query before it reaches the retriever, so typos and abbreviations get fixed by the LLM before the search runs.
+This bypasses `OracleVectorStore` entirely for retrieval. The `text.contains` clause uses plain keyword OR matching (words longer than 2 characters), letting Oracle Text's built-in stemming handle variations.
 
 ### Why It Matters
 
@@ -367,7 +385,7 @@ What it isn't:
 - **Not production-hardened.** There's no authentication, no rate limiting, no streaming responses.
 - **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral for episodic and procedural memory. The hybrid search retriever is Oracle-specific (it calls `DBMS_HYBRID_VECTOR.SEARCH`), but `RetrievalAugmentationAdvisor` accepts any `DocumentRetriever` implementation, so you could write one for PostgreSQL + pg_trgm or Elasticsearch. Oracle is what I used because it handles the relational chat history, the hybrid vector index, and the order/ticket tables all in one database.
 
-The whole point is that agent memory doesn't have to be complicated. Two advisors, a query transformer, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
+The whole point is that agent memory doesn't have to be complicated. Two advisors, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
 
 ---
 
