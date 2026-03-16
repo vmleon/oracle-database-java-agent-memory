@@ -72,7 +72,7 @@ Both tables live in the same Oracle Database. No Pinecone. No Redis. No second d
 
 ## The Procedural Memory (Tools)
 
-Procedural memory is implemented as `@Tool`-annotated methods in a Spring component that query real database tables. Here are two representative methods, simplified for clarity —the full class has five tools total (see [`AgentTools.java`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/java/dev/victormartin/agentmemory/chatserver/tools/AgentTools.java)):
+Procedural memory is implemented as `@Tool`-annotated methods in a Spring component that query real database tables. Here are two representative methods, simplified for clarity —the full class has six tools total (see [`AgentTools.java`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/java/dev/victormartin/agentmemory/chatserver/tools/AgentTools.java)):
 
 ```java
 @Tool(description = "Look up the status of a customer order by its order ID. " +
@@ -94,11 +94,11 @@ public String initiateReturn(
 
 The `@Tool` description tells the LLM _when_ to use each method, and `@ToolParam` describes the arguments. When the user says "I want to return order ORD-1001," the LLM reads the tool descriptions, decides `initiateReturn` is the right procedure, extracts the arguments from the conversation, calls the method, and incorporates the result into its response.
 
-The other three tools are `listOrders`, `escalateToSupport`, and `listSupportTickets`. They follow the same pattern: JPA repositories backed by Oracle Database tables. The LLM decides _when_ to act; the Java methods define _how_.
+The other four tools are `getCurrentDateTime` (fetches the current date/time from the database), `listOrders`, `escalateToSupport`, and `listSupportTickets`. They follow the same pattern: database queries via JPA or JDBC. The LLM decides _when_ to act; the Java methods define _how_.
 
 ## The Controller
 
-The controller wires everything together —two advisors, five tools, one `ChatClient`. Here's the core of it, simplified for clarity (the full version adds input validation and error handling —see [`AgentController.java`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/java/dev/victormartin/agentmemory/chatserver/controller/AgentController.java)):
+The controller wires everything together —two advisors, six tools, one `ChatClient`. Here's the core of it, simplified for clarity (the full version adds input validation, error handling, and conversation management endpoints —see [`AgentController.java`](https://github.com/victormartin/oracle-database-java-agent-memory/blob/main/src/chatserver/src/main/java/dev/victormartin/agentmemory/chatserver/controller/AgentController.java)):
 
 ```java
 @RestController
@@ -112,7 +112,7 @@ public class AgentController {
         // Builds a ChatClient with:
         //   - MessageChatMemoryAdvisor (episodic: last 100 messages per conversation)
         //   - RetrievalAugmentationAdvisor + OracleHybridDocumentRetriever (semantic: hybrid search)
-        //   - AgentTools via .defaultTools() (procedural: 5 @Tool methods)
+        //   - AgentTools via .defaultTools() (procedural: 6 @Tool methods)
         //   - System prompt defining the agent persona and tool usage rules
     }
 
@@ -130,7 +130,7 @@ public class AgentController {
 }
 ```
 
-Two endpoints, two advisors, five tools, one `ChatClient`. Let's break down the three memory types.
+Two endpoints, two advisors, six tools, one `ChatClient`. Let's break down the three memory types.
 
 ### Episodic Memory (Advisors)
 
@@ -146,7 +146,7 @@ Why hybrid instead of pure vector search? Dense embeddings capture meaning —a 
 
 ### Procedural Memory (Tools)
 
-**`AgentTools`** handles procedural memory. The `.defaultTools(agentTools)` call registers all five `@Tool`-annotated methods from the component. On every request, the LLM receives the tool descriptions alongside the user's message. If the task requires action —not just knowledge retrieval —the LLM calls the appropriate tool, gets the result, and weaves it into its response. Spring AI handles the tool-calling protocol automatically.
+**`AgentTools`** handles procedural memory. The `.defaultTools(agentTools)` call registers all six `@Tool`-annotated methods from the component. On every request, the LLM receives the tool descriptions alongside the user's message. If the task requires action —not just knowledge retrieval —the LLM calls the appropriate tool, gets the result, and weaves it into its response. Spring AI handles the tool-calling protocol automatically.
 
 All three memory types run on every request. The agent simultaneously remembers what you said, looks up relevant knowledge, and knows how to perform tasks.
 
@@ -270,9 +270,9 @@ This is a proof of concept. It demonstrates that you can give an AI agent three 
 What it isn't:
 
 - **Not production-hardened.** There's no authentication, no rate limiting, no streaming responses.
-- **Not Oracle-exclusive.** Spring AI's abstractions are vendor-neutral for episodic and procedural memory. The hybrid search retriever is Oracle-specific (it calls `DBMS_HYBRID_VECTOR.SEARCH`), but `RetrievalAugmentationAdvisor` accepts any `DocumentRetriever` implementation, so you could write one for PostgreSQL + pg_trgm or Elasticsearch. Oracle is what I used because it handles the relational chat history, the hybrid vector index, and the order/ticket tables all in one database.
+- **One database for everything.** Oracle AI Database 26ai handles relational chat history, hybrid vector search, and the order/ticket tables all in one place — no need to stitch together separate systems for vector search, full-text search, and relational data.
 
-The whole point is that agent memory doesn't have to be complicated. Two advisors, five tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
+The whole point is that agent memory doesn't have to be complicated. Two advisors, six tools backed by real database tables, seed data, one database, and the LLM stops forgetting.
 
 ---
 
