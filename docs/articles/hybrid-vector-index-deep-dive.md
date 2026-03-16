@@ -107,11 +107,75 @@ When the Spring Boot `DataSeeder` inserts a policy document:
 INSERT INTO POLICY_DOCS (id, content) VALUES (sys_guid(), ?)
 ```
 
-The hybrid index intercepts the DML through `CTXSYS.TEXTINDEXMETHODS` (the domain index implementation):
+The hybrid index intercepts the DML through `CTXSYS.TEXTINDEXMETHODS` (the domain index implementation). Both paths run within the same transaction:
 
-1. The row is inserted into `POLICY_DOCS`
-2. **Vector path**: The ONNX model computes a 384-dimensional embedding from the content, which is inserted into the HNSW graph
-3. **Text path**: The content is tokenized by the lexer, tokens are added to the `$I` table with posting list entries, and `$K`/`$R` mappings are updated
+**1. The row is inserted into `POLICY_DOCS`**
+
+**2. Vector path — embedding and HNSW insertion**
+
+The ONNX model (`all-MiniLM-L12-v2`) runs inside the database engine and transforms the text content into a 384-dimensional dense vector — an array of 384 float32 values that encodes the semantic meaning of the text. Sentences with similar meaning produce vectors that are geometrically close to each other (high cosine similarity).
+
+The resulting vector is then inserted into the HNSW graph. HNSW insertion works top-down:
+
+- A random level is assigned to the new node (most nodes only exist at layer 0; a few reach higher layers — this is what keeps upper layers sparse)
+- Starting from the topmost layer's entry point, the algorithm greedily navigates to the nearest neighbor at each layer
+- At each layer from the assigned level down to layer 0, the new node is connected to its closest neighbors with bidirectional edges
+- The number of connections per node is bounded by a parameter `M` (typically 16–64), which controls the trade-off between search accuracy and index size
+
+After insertion, the new document is reachable via graph traversal from any query vector.
+
+**3. Text path — tokenization and inverted index update**
+
+The content is passed through Oracle Text's lexer pipeline:
+
+- **Word boundary detection** — splits the text into individual tokens
+- **Case normalization** — lowercases all tokens
+- **Stopword removal** — drops common words like "the", "is", "and" that carry no search value
+- **Stemming** — reduces words to their root form ("returning" → "return", "policies" → "policy")
+
+The surviving tokens are then written into the Oracle Text internal tables. For a concrete example, say we insert this document:
+
+```
+"Items may be returned within 30 days. Our return policy covers all products."
+```
+
+After lexing, the meaningful tokens are something like: `item`, `return`, `30`, `day`, `return`, `policy`, `cover`, `product`. Here's what gets written:
+
+**`$I` — the inverted index (token → posting list)**
+
+This is the core search structure. Each token maps to a posting list: which documents contain it, at what positions, and how many times.
+
+| Token | Doc ID | Positions | Frequency |
+|---|---|---|---|
+| `return` | 42 | 4, 8 | 2 |
+| `policy` | 42 | 9 | 1 |
+| `item` | 42 | 1 | 1 |
+| `product` | 42 | 11 | 1 |
+| `30` | 42 | 5 | 1 |
+| `day` | 42 | 6 | 1 |
+| `cover` | 42 | 10 | 1 |
+
+When a keyword search for "return policy" runs, Oracle Text looks up both tokens in `$I`, finds that document 42 appears in both posting lists, and scores it accordingly (BM25 or similar relevance ranking). Position data also enables phrase matching — Oracle can verify that `return` at position 8 and `policy` at position 9 are adjacent.
+
+**`$K` — key mapping (internal doc ID → ROWID)**
+
+Oracle Text assigns its own sequential integer IDs to documents. `$K` maps these internal IDs back to the base table's physical ROWID:
+
+| Doc ID | ROWID |
+|---|---|
+| 42 | `AAASxQAALAAA1RAAAB` |
+
+This lets Oracle Text translate its internal results back to actual rows in `POLICY_DOCS`.
+
+**`$R` — reverse mapping (ROWID → internal doc ID)**
+
+The inverse of `$K`. When a row is updated or deleted in the base table, Oracle needs to find its corresponding text index entry — `$R` provides that lookup without scanning `$K`.
+
+**`$N` — negative list (pending deletes/updates)**
+
+When a row is deleted or updated, Oracle doesn't immediately remove its tokens from `$I` (that would be expensive). Instead, the old doc ID is added to `$N` as a "pending" entry. During index synchronization (`CTX_DDL.SYNC_INDEX`), entries in `$N` are processed: the old posting list entries in `$I` are cleaned up, and `$K`/`$R` mappings are updated. Until sync happens, search queries filter out `$N` entries so stale results aren't returned.
+
+---
 
 If the index is in a FAILED state, step 2 raises `ORA-29861` and the entire INSERT rolls back. A broken hybrid index blocks all DML on the base table.
 
