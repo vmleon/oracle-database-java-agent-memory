@@ -12,6 +12,7 @@ import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.generation.augmentation.ContextualQueryAugmenter;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import dev.victormartin.agentmemory.chatserver.memory.LoggingChatMemory;
 import dev.victormartin.agentmemory.chatserver.retriever.OracleHybridDocumentRetriever;
 import dev.victormartin.agentmemory.chatserver.service.ConversationInfo;
 import dev.victormartin.agentmemory.chatserver.service.ConversationService;
@@ -48,10 +49,11 @@ public class AgentController {
         this.jdbcTemplate = jdbcTemplate;
         this.conversationService = conversationService;
 
-        ChatMemory chatMemory = MessageWindowChatMemory.builder()
-                .chatMemoryRepository(chatMemoryRepository)
-                .maxMessages(100)
-                .build();
+        ChatMemory chatMemory = new LoggingChatMemory(
+                MessageWindowChatMemory.builder()
+                        .chatMemoryRepository(chatMemoryRepository)
+                        .maxMessages(100)
+                        .build());
 
         var hybridRetriever = new OracleHybridDocumentRetriever(
                 jdbcTemplate, 5, "POLICY_HYBRID_IDX", "rrf");

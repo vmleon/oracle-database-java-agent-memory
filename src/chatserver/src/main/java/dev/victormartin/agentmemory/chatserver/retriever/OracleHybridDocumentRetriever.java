@@ -102,11 +102,16 @@ public class OracleHybridDocumentRetriever implements DocumentRetriever {
             """.formatted(indexName, scorer, escaped, containsClause, topK);
     }
 
+    // Oracle Text operators that must not appear as search terms
+    private static final java.util.Set<String> ORACLE_TEXT_RESERVED = java.util.Set.of(
+            "and", "or", "not", "near", "within", "about", "accum", "minus", "equiv");
+
     private String buildContainsClause(String queryText) {
         String cleaned = escapeOracleText(queryText);
         String[] words = cleaned.split("\\s+");
         var terms = java.util.Arrays.stream(words)
                 .filter(w -> !w.isBlank() && w.length() > 2)
+                .filter(w -> !ORACLE_TEXT_RESERVED.contains(w.toLowerCase()))
                 .toList();
         if (terms.isEmpty()) {
             return cleaned.isBlank() ? "dummy" : cleaned;
